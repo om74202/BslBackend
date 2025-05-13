@@ -1,0 +1,142 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  email       String   @unique
+  address     String
+  phoneNumber String
+  imageUrl    String?
+  shiftNumber Int
+  shifts      Shift[]
+  unit        String
+  Department  String
+  Desingation String
+  users       User[]
+  devices     Device[]
+  lines       Line[]
+}
+
+model Shift {
+  id             String         @id @default(uuid())
+  start          String
+  end            String
+  plannedBreaks  PlannedBreak[]
+  organizationId String
+  lines          Line[]
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+}
+
+model CustomShift {
+  id            String               @id @default(uuid())
+  start         String
+  end           String
+  lineId        String
+  plannedBreaks PlannedBreakCustom[]
+  line          Line                 @relation(fields: [lineId], references: [id])
+}
+
+model PlannedBreakCustom {
+  id                  String      @id @default(uuid())
+  start               String
+  end                 String
+  typeOfBreak         String
+  customShift         CustomShift @relation(fields: [customShiftTimingId], references: [id])
+  customShiftTimingId String
+}
+
+model PlannedBreak {
+  id      String      @id @default(uuid())
+  start   String
+  end     String
+  type    TypeOfBreak
+  ShiftId String
+  shift   Shift       @relation(fields: [ShiftId], references: [id])
+}
+
+model Line {
+  id             String        @id @default(uuid())
+  name           String
+  type           String
+  customShifts   CustomShift[]
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  shifts         Shift[]
+  stations       Station[]
+  devices        Device[]
+}
+
+model Station {
+  id         String  @id @default(uuid())
+  name       String
+  isCritical Boolean @default(false)
+  lineId     String
+  line       Line    @relation(fields: [lineId], references: [id])
+}
+
+model User {
+  id             String       @id @default(uuid())
+  name           String
+  email          String       @unique
+  password       String
+  role           Role
+  status         Status       @default(Active)
+  createdAt      DateTime     @default(now())
+  address        String
+  phoneNumber    String
+  lastLogin      DateTime?
+  lines          Line[]
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Device {
+  id             String       @id @default(uuid())
+  name           String
+  type           String
+  organizationId String
+  lineId         String
+  status         DeviceStatus
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  line           Line         @relation(fields: [lineId], references: [id])
+}
+
+enum DeviceStatus {
+  Active
+  Inactive
+  Maintenance
+}
+
+enum Role {
+  SuperAdmin
+  Admin
+  SuperUser
+  CheckSheetUser
+  User
+}
+
+enum TypeOfBreak {
+  Construction
+  Maintenance
+}
+
+enum Status {
+  Active
+  Inactive
+}
