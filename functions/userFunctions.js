@@ -1,7 +1,7 @@
-import bcrypt from 'bcrypt';
+const bcrypt=require('bcrypt')
 
 
-export const hashPassword = async (password) => {
+const hashPassword = async (password) => {
     try {
       const salt = 10;
       const hashedPassword = await bcrypt.hash(password, salt);
@@ -11,7 +11,7 @@ export const hashPassword = async (password) => {
     }
   };
   
-  export const comparePassword = async (password, hashedPassword) => {
+  const comparePassword = async (password, hashedPassword) => {
     try {
       
       // Ensure both arguments are present
@@ -25,3 +25,5 @@ export const hashPassword = async (password) => {
       throw new Error(error.message);
     }
   };
+
+  module.exports={comparePassword,hashPassword}

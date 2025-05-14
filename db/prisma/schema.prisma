@@ -21,7 +21,7 @@ model Organization {
   phoneNumber   String
   imageUrl      String?     
   shiftCount    Int
-  shifts        Shift[]
+  shifts        ShiftTimings[]
   unit          String
   Department    String
   Desingation   String
@@ -30,24 +30,22 @@ model Organization {
   lines         Line[]
 }
 
-model Shift{
+model ShiftTimings{
   id            String @id @default(uuid())           //shift 
   start           String
   end             String
-  plannedBreaksCount  Int  
   plannedBreaks   PlannedBreak[]
   organizationId  String
   lines           Line[]   @relation("LineShift")
   organization    Organization   @relation(fields: [organizationId], references: [id])
 }
 
-model CustomShift {
+model CustomShiftsTimings {
   id           String         @id @default(uuid()) 
   start        String
   end          String
   lineId       String
-  line         Line @relation(fields: [lineId],references: [id])
-     plannedBreaksCustomCount  Int
+  line         Line @relation(fields: [lineId],references: [lineId])
   plannedBreaksCustom PlannedBreakCustom[]     
 }
 
@@ -55,8 +53,8 @@ model PlannedBreakCustom {
   id         String             @id @default(uuid()) 
   start      String
   end        String
-  typeOfBreak String
-  customShift CustomShift @relation(fields: [customShiftTimingId], references: [id])
+  typeOfBreak  String
+  customShiftsTimings CustomShiftsTimings @relation(fields: [customShiftTimingId], references: [id])
   customShiftTimingId String   
 }
 
@@ -64,23 +62,23 @@ model PlannedBreak{
   id            String @id @default(uuid())
   start        String
   end          String
-  type         TypeOfBreak
+  typeOfBreak        TypeOfBreak
   ShiftId      String
-  shift         Shift  @relation(fields: [ShiftId] , references: [id])
+  shiftTimings        ShiftTimings  @relation(fields: [ShiftId] , references: [id])
 }
 
 model Line{
-  id           String @id @default(uuid()) 
-  name         String 
-  type         String
-  shiftCount    Int
-  customShiftCount  Int
-  stationCount     Int
-  customShifts   CustomShift[]
+  lineId           String @id @default(uuid()) 
+  lineName        String 
+  lineType     String
+  noOfShifts    Int
+  noOfCustomShifts  Int
+  noOfStations     Int
+  customShiftsTimings   CustomShiftsTimings[]
   organizationId    String
   organization      Organization @relation(fields: [organizationId],references: [id])
   users            User[] @relation("UserLine")
-  shifts       Shift[] @relation("LineShift")
+  shiftTimings       ShiftTimings[] @relation("LineShift")
   stations     Station[]
   devices      Device[]
 }
@@ -88,9 +86,9 @@ model Line{
 model Station{
   id           String @id @default(uuid())
   name         String
-  isCritical     Boolean @default(false)
+  Pokayoke     Boolean @default(false)
   lineId       String
-  line         Line @relation(fields: [lineId],references: [id])
+  line         Line @relation(fields: [lineId],references: [lineId])
 }
 
 model User {
@@ -98,7 +96,7 @@ model User {
   name          String 
   email         String @unique
   password      String
-  imageUrl      String?
+  uploadImageUrl      String?
   role          Role  
   status        Status @default(Active)
   createdAt     DateTime @default(now())
@@ -118,7 +116,7 @@ model Device{
   lineId         String
   status         DeviceStatus
   organization    Organization @relation(fields: [organizationId],references: [id])
-  line            Line @relation( fields: [lineId], references: [id])
+  line            Line @relation( fields: [lineId], references: [lineId])
 }
 enum DeviceStatus{
   Active

@@ -6,7 +6,7 @@ const userRouter=express.Router();
 const bcrypt=require('bcrypt')
 
 userRouter.post('/register',async (req,res)=>{
-    const {name , email , password , role , address , phoneNumber , organizationId,imageUrl ,lines=[]}=req.body;
+    const {name , email , password , role , address , phoneNumber , organizationId,uploadImageUrl ,lines=[]}=req.body;
 
     if (!name) return res.status(400).send({ message: "Name is required" });
     if (!email) return res.status(400).send({ message: "Email is required" });
@@ -44,7 +44,7 @@ userRouter.post('/register',async (req,res)=>{
         const user =await prismaClient.user.create({
             data:{
                 name:name,
-                imageUrl:imageUrl,
+                uploadImageUrl:uploadImageUrl,
                 email:email,
                 password:hashedPassword,
                 role:role,

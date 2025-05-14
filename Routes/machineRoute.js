@@ -4,35 +4,68 @@ const { prismaClient } = require('../lib/prismaClient');
 const LineRouter=express.Router();
 
 LineRouter.post('/createLine',async(req , res)=>{
-const {name , type  , organizationId , userId , shiftCount , customShiftCount , stationCount ,shiftIds=[] , customShifts=[] ,stations=[]}=req.body
+const {lineName , lineType  , organizationId , noOfShifts , noOfCustomShifts , noOfStations , customShiftsTimings=[] ,stations=[]}=req.body
+let shiftIds=[];
 
-if (!name) return res.status(400).send({ message: "Name is required" });
-if (!organizationId) return res.status(400).send({ message: "Name is required" });
+try{
+  const orgData=await prismaClient.organization.findUnique({
+  where:{
+    id:organizationId
+  },include:{
+    shifts:true
+  }
+})
+if(!orgData){
+  return res.status(400).json({message:"Organization ID  is invalid "})
+}
+
+const totalShiftIds=orgData.shifts.map((shift)=>shift.id)
+
+if(noOfShifts>totalShiftIds.length){
+  return res.status(400).json({message:"No. of Shifts is invalid "})
+}
+
+
+for(let i=0;i<noOfShifts;i++){
+  shiftIds[i]=totalShiftIds[i];
+}
+
+
+console.log(shiftIds);
+}catch(e){
+  console.log(e)
+return res.status(404).json({message:"No shiftIds" , error :e})
+}
+if (!lineName) return res.status(400).send({ message: "Line Name is required" });
+if (!organizationId) return res.status(400).send({ message: "organization ID is required" });
+if (!noOfShifts) return res.status(400).send({ message: "No. of shifts are   required" });
+if (!noOfStations) return res.status(400).send({ message: "Station Count is required" });
+
+
 
 try{
     console.time("createLine")
 const line=await prismaClient.line.create({
     data:{
-        name:name,
+        lineName:lineName,
         organizationId:organizationId,
-        type:type,
-        stationCount:stationCount,
-        shiftCount:shiftCount,
-        customShiftCount:customShiftCount,
+        lineType:lineType,
+        noOfStations:noOfStations,
+        noOfShifts:noOfShifts,
+        noOfCustomShifts:noOfCustomShifts,
         stations:{
           create:stations.map((station)=>({
             name:station.name,
-            isCritical:station.isCritical || false
+            Pokayoke:station.Pokayoke || false
           }))
         },
-        shifts:{
+        shiftTimings:{
           connect:shiftIds.map((id)=>({id}))
         },
-        customShifts: {
-          create: customShifts.map((shift) => ({
+        customShiftsTimings: {
+          create: customShiftsTimings.map((shift) => ({
             start: shift.start,
             end: shift.end,
-            plannedBreaksCustomCount:shift.plannedBreaksCustomCount,
             plannedBreaksCustom: {
               create: shift.plannedBreaksCustom.map((breakObj) => ({
                 start: breakObj.start,
@@ -45,7 +78,7 @@ const line=await prismaClient.line.create({
     }
 })
 console.timeEnd("createLine");
-res.json({message:"Line Created Successfully"})
+res.json({message:"Line Created Successfully",line})
 }catch(e){
   console.log(e);
     res.status(500).json({message:"Internal Server Error "})
@@ -56,8 +89,8 @@ LineRouter.get('/getLines',async(req , res)=>{
     try{
         const Lines=await prismaClient.line.findMany({
           include:{
-            shifts:true,
-            customShifts:true,
+            shiftTimings:true,
+            customShiftsTimings:true,
             stations:true,
             devices:true
           }
@@ -76,8 +109,8 @@ LineRouter.get('/getLines/:orgId',async (req, res)=>{
             organizationId:req.params.orgId
           },
           include:{
-            shifts:true,
-            customShifts:true,
+            shiftTimings:true,
+            customShiftsTimings:true,
             stations:true,
             devices:true
           }
