@@ -1,5 +1,6 @@
 const express = require('express');
 const { prismaClient } = require('../lib/prismaClient');
+const { isSignedIn, isSuperAdmin, isAdmin } = require('../middlewares/userMiddlewares');
 
 const organisationRouter=express.Router();
 
@@ -48,7 +49,7 @@ organisationRouter.post('/createOrganization',async(req,res)=>{
     }
 })
 
-organisationRouter.get('/getOrganization',async(req , res)=>{
+organisationRouter.get('/getOrganization',isSignedIn,async(req , res)=>{
     try{
       console.time("fetch")
       console.log(prismaClient)

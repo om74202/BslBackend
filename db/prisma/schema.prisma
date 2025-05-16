@@ -100,8 +100,8 @@ model User {
   role          Role  
   status        Status @default(Active)
   createdAt     DateTime @default(now())
-  address       String
-  phoneNumber   String
+  address       String?
+  phoneNumber   String?
   lastLogin     DateTime?
   lines          Line[]   @relation("UserLine")
   organizationId  String

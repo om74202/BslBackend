@@ -8,10 +8,13 @@ const influxRouter = require('./Routes/influxRoutes');
 const organisationRouter = require('./Routes/organizationRoute');
 const LineRouter = require('./Routes/machineRoute');
 const deviceRouter = require('./Routes/deviceRouter');
-require('dotenv').config();
+const cookieParser = require('cookie-parser');
+require('dotenv').config({ path: '.env.influx' });
 require('./Routes/Websocket');
 
+
 const app=express();
+app.use(cookieParser())
 
 app.use(
   cors({
@@ -34,7 +37,7 @@ app.get('/',async (req,res)=>{
     res.json({message:"hiiii "})
 })
 app.use("/user",userRouter)
-app.use('/',influxRouter);
+app.use('/influx',influxRouter);
 app.use('/org',organisationRouter)
 app.use('/',LineRouter);
 app.use('/',deviceRouter);

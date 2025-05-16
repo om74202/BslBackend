@@ -67,12 +67,14 @@ const line=await prismaClient.line.create({
             start: shift.start,
             end: shift.end,
             plannedBreaksCustom: {
-              create: shift.plannedBreaksCustom.map((breakObj) => ({
-                start: breakObj.start,
-                end: breakObj.end,
-                typeOfBreak: breakObj.typeOfBreak
-              }))
-            }
+      create: Array.isArray(shift.plannedBreaksCustom)
+        ? shift.plannedBreaksCustom.map((breakObj) => ({
+            start: breakObj.start,
+            end: breakObj.end,
+            typeOfBreak: breakObj.typeOfBreak
+          }))
+        : [] // fallback to empty array if not passed or not an array
+    }
           }))
         }
     }

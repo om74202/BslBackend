@@ -3,7 +3,8 @@ const { prismaClient } = require('../lib/prismaClient');
 const { hashPassword, comparePassword } = require('../functions/userFunctions');
 const JWT =require('jsonwebtoken');
 const userRouter=express.Router();
-const bcrypt=require('bcrypt')
+const bcrypt=require('bcrypt');
+const { isSignedIn } = require('../middlewares/userMiddlewares');
 
 userRouter.post('/register',async (req,res)=>{
     const {name , email , password , role , address , phoneNumber , organizationId,uploadImageUrl ,lines=[]}=req.body;
@@ -39,6 +40,19 @@ userRouter.post('/register',async (req,res)=>{
         }
         const hashedPassword=await hashPassword(password);
 
+        const lineRecords = await prismaClient.line.findMany({
+      where: {
+        lineName: {
+          in: lines
+        }
+      },
+      select: { lineId: true }
+    });
+
+    const onlyIds = lineRecords.map((line) => line.lineId);
+    console.log(onlyIds)
+
+
         console.time("register")
 
         const user =await prismaClient.user.create({
@@ -51,9 +65,9 @@ userRouter.post('/register',async (req,res)=>{
                 address:address,
                 phoneNumber:phoneNumber,
                 organizationId:organizationId,
-                lines:{
-                  connect:lines.map((id)=>({id}))
-                }
+               lines:{
+                connect:onlyIds.map((lineId)=>({lineId}))
+               }
             }
         })
         console.timeEnd("register")
@@ -109,7 +123,12 @@ userRouter.post('/login' , async (req, res)=>{
 
       const token = JWT.sign({id:user.id,email:user.email,role:user.role},process.env.JWT_SECRET_KEY)
 
-      res.cookie("authToken", token);
+      res.cookie("authToken", token,{
+  httpOnly: true,       // 🚫 Blocks JavaScript access
+  secure: false,        // ✅ false for development over HTTP (⚠️ must be true in production with HTTPS)
+  sameSite: "Lax",      // ⚠️ 'Strict' blocks some auth flows; 'Lax' is usually fine for logged-in apps
+  maxAge: 24 * 60 * 60 * 1000 // 1 day
+});
 
       req.session.user = {
         id: id,
@@ -129,7 +148,7 @@ userRouter.post('/login' , async (req, res)=>{
   
 })
 
-userRouter.post('/logout',async(req,res)=>{
+userRouter.post('/logout',isSignedIn,async(req,res)=>{
     res.clearCookie("authToken"); 
   req.session.destroy(); 
   res.json({ message: "Logged out successfully" });
