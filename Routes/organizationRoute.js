@@ -1,5 +1,5 @@
 const express = require('express');
-const { prismaClient } = require('../lib/prismaClient');
+const prismaClient  = require('../lib/prismaClient');
 const { isSignedIn, isSuperAdmin, isAdmin } = require('../middlewares/userMiddlewares');
 
 const organisationRouter=express.Router();

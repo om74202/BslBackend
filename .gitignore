@@ -1,0 +1,6 @@
+# .gitignore
+**/.env               # Ignores .env in ALL directories
+.env.influx
+db/prisma/.env
+node_modules/
+.env

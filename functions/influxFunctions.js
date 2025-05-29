@@ -32,9 +32,5 @@ async function checkInfluxDBConnection(url, token) {
   }
 }
 
-// Usage example
-// checkInfluxDBConnection().then(isConnected => {
-//   console.log('Connection status:', isConnected);
-// });
 
 module.exports = { checkInfluxDBConnection };

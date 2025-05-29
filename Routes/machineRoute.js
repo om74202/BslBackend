@@ -1,12 +1,12 @@
 const express = require('express');
-const { prismaClient } = require('../lib/prismaClient');
+const prismaClient  = require('../lib/prismaClient');
 
 const LineRouter=express.Router();
 
 LineRouter.post('/createLine',async(req , res)=>{
-const {lineName , lineType  , organizationId , noOfShifts , noOfCustomShifts , noOfStations , customShiftsTimings=[] ,stations=[]}=req.body
+const {lineName , lineType  , organizationId , noOfShifts=0 , noOfCustomShifts=0 , noOfStations=0 , customShiftsTimings=[] ,stations=[] }=req.body
 let shiftIds=[];
-
+console.log(req.body)
 try{
   const orgData=await prismaClient.organization.findUnique({
   where:{
@@ -36,10 +36,12 @@ console.log(shiftIds);
   console.log(e)
 return res.status(404).json({message:"No shiftIds" , error :e})
 }
-if (!lineName) return res.status(400).send({ message: "Line Name is required" });
+
+  if (!lineName) return res.status(400).send({ message: "Line Name is required" });
 if (!organizationId) return res.status(400).send({ message: "organization ID is required" });
 if (!noOfShifts) return res.status(400).send({ message: "No. of shifts are   required" });
 if (!noOfStations) return res.status(400).send({ message: "Station Count is required" });
+if (!lineType) return res.status(400).send({ message: "line Type  is required" });
 
 
 
@@ -53,15 +55,16 @@ const line=await prismaClient.line.create({
         noOfStations:noOfStations,
         noOfShifts:noOfShifts,
         noOfCustomShifts:noOfCustomShifts,
+      
         stations:{
           create:stations.map((station)=>({
             name:station.name,
             Pokayoke:station.Pokayoke || false
           }))
-        },
+        },  
         shiftTimings:{
           connect:shiftIds.map((id)=>({id}))
-        },
+        }, 
         customShiftsTimings: {
           create: customShiftsTimings.map((shift) => ({
             start: shift.start,
@@ -79,6 +82,7 @@ const line=await prismaClient.line.create({
         }
     }
 })
+
 console.timeEnd("createLine");
 res.json({message:"Line Created Successfully",line})
 }catch(e){

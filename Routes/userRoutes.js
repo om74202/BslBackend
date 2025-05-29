@@ -1,5 +1,5 @@
 const express = require('express');
-const { prismaClient } = require('../lib/prismaClient');
+const prismaClient = require('../lib/prismaClient');
 const { hashPassword, comparePassword } = require('../functions/userFunctions');
 const JWT =require('jsonwebtoken');
 const userRouter=express.Router();

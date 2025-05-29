@@ -1,6 +1,6 @@
 
 const express=require('express');
-const { prismaClient } = require('./lib/prismaClient');
+const { prismaClient, torqueGun } = require('./lib/prismaClient');
 const userRouter = require('./Routes/userRoutes');
 const session = require("express-session");
 const cors=require('cors');
@@ -9,6 +9,8 @@ const organisationRouter = require('./Routes/organizationRoute');
 const LineRouter = require('./Routes/machineRoute');
 const deviceRouter = require('./Routes/deviceRouter');
 const cookieParser = require('cookie-parser');
+const torqueRouter = require('./Routes/torqueGun');
+const driveRouter = require('./Routes/drive');
 require('dotenv').config({ path: '.env.influx' });
 require('./Routes/Websocket');
 
@@ -37,10 +39,12 @@ app.get('/',async (req,res)=>{
     res.json({message:"hiiii "})
 })
 app.use("/user",userRouter)
-app.use('/influx',influxRouter);
+app.use('/',influxRouter);
 app.use('/org',organisationRouter)
 app.use('/',LineRouter);
 app.use('/',deviceRouter);
+app.use('/torque/',torqueRouter);
+app.use('/drive',driveRouter);
 
 app.listen(3001,()=>{
     console.log("server is running on port 3001");
