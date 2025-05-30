@@ -33,7 +33,7 @@ for(let i=0;i<noOfShifts;i++){
 
 console.log(shiftIds);
 }catch(e){
-  console.log(e)
+  console.log(e)  
 return res.status(404).json({message:"No shiftIds" , error :e})
 }
 

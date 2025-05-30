@@ -52,7 +52,11 @@ torqueRouter.get('/getAll',async(req , res)=>{
     
 try{
     console.time("torqueGun get")
-    const torqueGuns=await prismaClient.torqueGun.findMany();
+    const torqueGuns=await prismaClient.torqueGun.findMany({
+        include:{
+            station:true
+        }
+    });
 
     console.timeEnd("torqueGun get")
     return res.json({status:"pass", torqueGuns:torqueGuns})
@@ -62,6 +66,45 @@ try{
 
 }
 
+
+
 })
+
+
+
+torqueRouter.get('/getAll/:orgId',async(req , res)=>{
+    const {orgId}=req.params
+
+    
+    try{
+        console.time("torqueGun get")
+
+       
+        const torqueGuns=await prismaClient.torqueGun.findMany({
+           where:{
+            station:{
+                line:{
+                    organization:{
+                        id:orgId
+                    }
+                }
+            }
+           },
+           include:{
+            station:true
+           }
+        });
+    
+        console.timeEnd("torqueGun get")
+        return res.json({status:"pass", torqueGuns:torqueGuns})
+    }catch(e){
+        console.log(e);
+        return res.status(400).send({message:"Internal Server Error " , status:"fail" , error :e})
+    
+    }
+    
+    
+    
+    })
 
 module.exports=torqueRouter;

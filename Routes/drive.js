@@ -57,4 +57,20 @@ driveRouter.get('/getAll',async(req ,res)=>{
     }
 })
 
+driveRouter.get('/getAll/:orgId',async(req ,res)=>{
+    const {orgId}=req.params
+    try{
+        const drives=await prismaClient.drive.findMany({
+            where:{
+                organizationId:orgId
+            }
+        });
+
+        return res.json({message:"Get All drives Successfull",drives})
+    }catch(e){
+        return res.status(400).send({message:" Internal Server Error" , status:"fail" , error :e})
+
+    }
+})
+
 module.exports=driveRouter

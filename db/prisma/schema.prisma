@@ -19,12 +19,15 @@ model Organization {
   email         String @unique
   address       String
   phoneNumber   String
+  influxOrgID    String?
+  influxToken    String?
   imageUrl      String?     
   shiftCount    Int
   shifts        ShiftTimings[]
   unit          String
   Department    String
   Desingation   String
+  checksheets   Checksheet[]
   drives        Drive[]
   users         User[]
   devices       Device[]
@@ -154,6 +157,31 @@ model Device{
   organization    Organization @relation(fields: [organizationId],references: [id])
   line            Line @relation( fields: [lineId], references: [lineId])
 }
+
+
+
+model Checksheet{
+  checksheetId        String @id @default(uuid())
+  checksheetName      String  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime  @updatedAt
+  checksheetData      Bytes
+  organizationId      String
+  checksheetType      ChecksheetType
+  organization        Organization @relation(fields: [organizationId],references: [id])
+
+  @@unique([organizationId,checksheetName])
+}
+
+
+enum ChecksheetType{
+  Filled
+  Template
+}
+
+
+
+
 enum DeviceStatus{
   Active
   Inactive

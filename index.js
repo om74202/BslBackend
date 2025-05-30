@@ -11,6 +11,9 @@ const deviceRouter = require('./Routes/deviceRouter');
 const cookieParser = require('cookie-parser');
 const torqueRouter = require('./Routes/torqueGun');
 const driveRouter = require('./Routes/drive');
+const checkSheetRoute = require('./Routes/checkSheet');
+const multer = require('multer');
+const upload=multer()
 require('dotenv').config({ path: '.env.influx' });
 require('./Routes/Websocket');
 
@@ -45,6 +48,7 @@ app.use('/',LineRouter);
 app.use('/',deviceRouter);
 app.use('/torque/',torqueRouter);
 app.use('/drive',driveRouter);
+app.use('/checksheet',upload.single("checksheetData"),checkSheetRoute);
 
 app.listen(3001,()=>{
     console.log("server is running on port 3001");

@@ -10,7 +10,8 @@ const queryApi = influxDB.getQueryApi("opsight_ai");
 influxRouter.get('/torqueGun/data', async (req, res) => {
   try {
     const bucket = 'SHIFT_A';
-	  const measurement="TORQUE_DATA_LOGGING";
+	  const measurement="TORQUE";
+    const line=req.params;
     const torqueGuns = ['torque_gun_1', 'torque_gun_2', 'torque_gun_3'];
     const stations = [
       'Station 10A', 'Station 10B', 'Station 10L1', 'Station 10R1_GUN1','Station 10R1_GUN2','Station 10R1_GUN3',
