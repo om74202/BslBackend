@@ -4,7 +4,7 @@ const prismaClient  = require('../lib/prismaClient');
 const torqueRouter=express.Router();
 
 torqueRouter.post('/add',async(req , res)=>{
-    const {torqueGunName , torqueGunMaxLimit , torqueGunMinLimit , torqueGunMaxAngle , torqueGunMinAngle , stationId}=req.body;
+    const {torqueGunName , torqueGunMaxLimit , torqueGunMinLimit , torqueGunMaxAngle , torqueGunMinAngle , stationName}=req.body;
     console.log(req.body)
 
     if (!torqueGunName) return res.status(400).send({ message: "Torque Gun Name is required" });
@@ -22,6 +22,12 @@ torqueRouter.post('/add',async(req , res)=>{
     if(existingTorqueGun){
         return res.status(400).send({message:"Please give the torque gun a unique name " , status:"fail"})
     }
+    const station=await prismaClient.station.findFirst({
+        where:{
+            name:stationName
+        }
+    })
+    
 try{
     console.time("torqueGun creation")
     const torqueGun=await prismaClient.torqueGun.create({
@@ -31,7 +37,7 @@ try{
             torqueGunMinAngle:torqueGunMinAngle,
             torqueGunMaxLimit:torqueGunMaxLimit,
             torqueGunMinLimit:torqueGunMinLimit,
-            stationId:stationId
+            stationId:station.id
         }
     })
 

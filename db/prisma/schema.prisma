@@ -92,7 +92,7 @@ model Line{
 
 model Station{  
   id           String @id @default(uuid())
-  name         String
+  name         String  @unique
   Pokayoke     Boolean @default(false)
   lineId       String
   torqueGuns     TorqueGun[]
