@@ -42,7 +42,7 @@ app.get('/',async (req,res)=>{
     res.json({message:"hiiii "})
 })
 app.use("/user",userRouter)
-app.use('/',influxRouter);
+app.use('/influx',influxRouter);
 app.use('/org',organisationRouter)
 app.use('/',LineRouter);
 app.use('/',deviceRouter);
