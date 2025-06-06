@@ -45,13 +45,13 @@ organisationRouter.post('/createOrganization',async(req,res)=>{
 
         const influxData={name:name}
 
-        const influxResponse = await axios.post(`http://localhost:8086/api/v2/orgs`, influxData, {
+        const influxResponse = await axios.post(`http://20.40.44.15:8086/api/v2/orgs`, influxData, {
                         headers: {
-                            Authorization: `Token d9PzP1NDlWYBfKNQtRYkaAvo9wcL3Yptb1-h8BuM3d-prZRIuslNwKYbqIdU4I6GG-a_-qtTJYGxFClKhelipQ==`,
+                            Authorization: `Token QPC-rKJSF8fuiWCTQTEvL6WwOGUcrIvDNnazdN4DGdMuM1E9oem6zpiW9KCJVepqx-gxlT-7XE3SFy5IzNbEhQ==`,
                             'Content-Type': 'application/json'
                         }
                     });
-
+console.log(influxResponse.status);
                    if (influxResponse.status === 201) {
                                    // Update MongoDB document with InfluxDB ID
                                    try{
@@ -78,24 +78,36 @@ organisationRouter.post('/createOrganization',async(req,res)=>{
 
                                    
                                } else {
-                                  
-                                   const deletedorg=await  prismaClient.organization.delete({
+				       const deleteShift=await prismaClient.shiftTimings.deleteMany({
+                                    where:{
+                                      organizationId:org.id
+                                    }
+                                  })
+
+                                  const deletedevice=await prismaClient.device.deleteMany({
+                                    where:{
+                                      organizationId:org.id
+                                    }
+                                  })
+                                   const deletedorg=await  prismaClient.organization.deleteMany({
                                     where:{
                                       id:org.id
                                     }
                                    })
+
                                    console.log("organization deleted")
-                                   res.status(500).json({ message: 'Failed to create organization in InfluxDB. Organization was rolled back from DataBase.' });
+                                  return  res.status(500).json({ message: 'Failed to create organization in InfluxDB. Organization was rolled back from DataBase.' });
                                }
 
-        res.json({message:"Organization Created Successfully"})
+       return  res.json({message:"Organization Created Successfully"})
     }catch(e){
         console.log(e);
-        res.status(501).json({message:"Internal Server Error"})
+	    console.log(e);
+       return res.status(501).json({message:"Internal Server Error",error:e})
     }
 })
 
-organisationRouter.get('/getOrganization',isSignedIn,async(req , res)=>{
+organisationRouter.get('/getOrganization',async(req , res)=>{
     try{
       console.time("fetch")
       console.log(prismaClient)

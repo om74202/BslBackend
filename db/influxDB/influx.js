@@ -8,7 +8,7 @@ const { env } = require('process');
 // Set up environment variables or directly replace with your values
 
 const url = process.env.INFLUX_URL || "http://20.40.44.15:8086";
-const token = process.env.INFLUXDB_TOKEN || "8tecUTFpztrGUmSwoFZ_1g-7TTXp_MitnVf9lhna4IxeDWDPFnQV41pyJ-ZCISFk8Ehc89kuWXBGW0xzuMq16A==";
+const token = "8tecUTFpztrGUmSwoFZ_1g-7TTXp_MitnVf9lhna4IxeDWDPFnQV41pyJ-ZCISFk8Ehc89kuWXBGW0xzuMq16A==";
 
 // Initialize the InfluxDB client
 const influxDB = new InfluxDB({

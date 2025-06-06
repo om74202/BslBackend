@@ -23,11 +23,12 @@ model Organization {
   influxToken    String?
   imageUrl      String?     
   shiftCount    Int
+  tables        ChecksheetTable[]
+  submissions    Submission[]
   shifts        ShiftTimings[]
   unit          String
   Department    String
   Desingation   String
-  checksheets   Checksheet[]
   drives        Drive[]
   users         User[]
   devices       Device[]
@@ -141,6 +142,8 @@ model User {
   phoneNumber   String?
   lastLogin     DateTime?
   lines          Line[]   @relation("UserLine")
+  checksheetTables     ChecksheetTable[]
+  submissions    Submission[]
   organizationId  String
   organization   Organization @relation(fields: [organizationId],references: [id])
 }
@@ -160,24 +163,58 @@ model Device{
 
 
 
-model Checksheet{
-  checksheetId        String @id @default(uuid())
-  checksheetName      String  
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime  @updatedAt
-  checksheetData      Bytes
-  organizationId      String
-  checksheetType      ChecksheetType
-  organization        Organization @relation(fields: [organizationId],references: [id])
 
-  @@unique([organizationId,checksheetName])
+
+
+// schema.prisma
+
+model ChecksheetTable {
+  id             String   @id @default(uuid())
+  name           String
+  tableData      Json     // 2D array of cell values
+  cellProperties Json     // map like "0-0": { ... }
+  cellStyles     Json     // map like "0-0": { ... }
+  createdAt      DateTime @default(now())
+
+  updatedAt      DateTime @updatedAt
+  userId         String
+  user           User @relation(fields: [userId],references: [id])
+
+  // optional relation if you link to an organization
+  organizationId String?
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 }
 
 
-enum ChecksheetType{
-  Filled
-  Template
+model Submission {
+  id             String   @id @default(uuid())
+  name           String
+  tableData      Json     // 2D array of cell values
+  cellProperties Json     // map like "0-0": { ... }
+  cellStyles     Json     // map like "0-0": { ... }
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+shift          String?
+  location       String?
+  line           String?
+  comment        String? 
+  status        SubmissionStatus @default(Pending)
+
+  // optional relation if you link to an organization
+    userId         String
+  organizationId String
+    user            User?  @relation(fields: [userId],references: [id])
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 }
+
+
+enum SubmissionStatus{
+  Pending
+  Approved 
+  Reject
+}
+
 
 
 
@@ -193,6 +230,7 @@ enum Role{
   SuperUser
   CheckSheetUser
   User
+Maruti_Bsl
 }
 
 enum lineType{
@@ -214,3 +252,4 @@ enum TorqueGunStatus{
   Active
   Inactive
 }
+

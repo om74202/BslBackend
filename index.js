@@ -23,7 +23,7 @@ app.use(cookieParser())
 
 app.use(
   cors({
-    origin: ["http://40.81.226.154", "http://localhost:5173"], // URL of your React frontend
+	  origin: ["http://20.198.22.6", "http://localhost:5173"], // URL of your React frontend
     credentials: true,
     allowedHeaders: ['Authorization', 'Content-Type']
   }))
