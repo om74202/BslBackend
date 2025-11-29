@@ -66,11 +66,34 @@ driveRouter.get('/getAll/:orgId',async(req ,res)=>{
             }
         });
 
-        return res.json({message:"Get All drives Successfull",drives})
+        return res.json({message:"Get All drives Successfull",drives:drives})
     }catch(e){
         return res.status(400).send({message:" Internal Server Error" , status:"fail" , error :e})
 
     }
 })
+
+
+driveRouter.put('/setStatusDrive/:driveId',async (req, res)=>{
+    try{
+      const {status}=req.body;
+      if(!status || status!=="Active" && status!=="Inactive"){
+        return res.status(500).json({message:"Invalid Status , it must be Active or Inactive"})
+      }
+        const {driveId} = req.params
+        const Orgs=await prismaClient.drive.update({
+          where:{
+            driveId:driveId
+          },
+          data:{
+            status:status
+          }
+        });
+        res.status(200).json({message:`Status updated to ${status}`, status:"success"})
+      }catch(e){
+        res.status(404).json({message:"drive not found", error:e})
+      }
+  })
+
 
 module.exports=driveRouter

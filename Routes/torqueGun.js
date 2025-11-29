@@ -12,16 +12,8 @@ torqueRouter.post('/add',async(req , res)=>{
     if (!torqueGunMinLimit) return res.status(400).send({ message: "Torque Gun Minimum limit is required" });
     if (!torqueGunMaxAngle) return res.status(400).send({ message: "Torque Gun Maximum Angle limit is required" });
     if (!torqueGunMinAngle) return res.status(400).send({ message: "Torque Gun Minimum Angleis required" });
-    if (!stationId) return res.status(400).send({ message: "Station ID is  required" });
+    if (!stationName) return res.status(400).send({ message: "StationName is  required" });
 
-    const existingTorqueGun=await prismaClient.torqueGun.findFirst({
-        where:{
-            torqueGunName:torqueGunName
-        }
-    })
-    if(existingTorqueGun){
-        return res.status(400).send({message:"Please give the torque gun a unique name " , status:"fail"})
-    }
     const station=await prismaClient.station.findFirst({
         where:{
             name:stationName
@@ -112,5 +104,30 @@ torqueRouter.get('/getAll/:orgId',async(req , res)=>{
     
     
     })
+
+
+
+
+
+torqueRouter.put('/setStatusTorque/:torqueGunId',async (req, res)=>{
+    try{
+      const {status}=req.body;
+      if(!status || status!=="Active" && status!=="Inactive"){
+        return res.status(500).json({message:"Invalid Status , it must be Active or Inactive"})
+      }
+        const {torqueGunId} = req.params
+        const Orgs=await prismaClient.torqueGun.update({
+          where:{
+            torqueGunId:torqueGunId
+          },
+          data:{
+            status:status
+          }
+        });
+        res.status(200).json({message:`Status updated to ${status}`, status:"success"})
+      }catch(e){
+        res.status(404).json({message:"torqueGun not found", error:e})
+      }
+  })
 
 module.exports=torqueRouter;

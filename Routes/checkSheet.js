@@ -80,6 +80,7 @@ checkSheetRoute.put('/submission/update/:submissionId', async (req, res) => {
   try {
     const { submissionId } = req.params;
     const {
+	    status="Pending",
       data: {
         tableData = [],
         cellProperties = {},
@@ -100,6 +101,7 @@ checkSheetRoute.put('/submission/update/:submissionId', async (req, res) => {
       where: { id: submissionId },
       data: {
         tableData,
+	      status:status,
         cellProperties,
         cellStyles
       }
@@ -133,14 +135,39 @@ checkSheetRoute.get('/submissions', async (req, res) => {
 
 checkSheetRoute.get('/submissions/:orgId', async (req, res) => {
   try {
-    const { orgId} = req.params;
+    const { orgId } = req.params;
+    const { startTime, endTime } = req.query;
+
+    // Convert ISO strings to JS Date objects if provided
+    const start = startTime ? new Date(startTime) : null;
+    const end = endTime ? new Date(endTime) : null;
+
+    // Construct dynamic where clause
+    const whereClause = {
+      organizationId: orgId
+    };
+
+    if (start && end) {
+      whereClause.createdAt = {
+        gte: start,
+        lte: end
+      };
+    } else if (start) {
+      whereClause.createdAt = {
+        gte: start
+      };
+    } else if (end) {
+      whereClause.createdAt = {
+        lte: end
+      };
+    }
 
     const submissions = await prismaClient.submission.findMany({
-      where: { organizationId:orgId },
+      where: whereClause,
       include: {
-        user:{
-          select:{
-            name:true
+        user: {
+          select: {
+            name: true
           }
         }
       }
@@ -148,40 +175,87 @@ checkSheetRoute.get('/submissions/:orgId', async (req, res) => {
 
     return res.status(200).json(submissions);
   } catch (err) {
-    console.error("Error fetching tables for user:", err);
+    console.error("Error fetching submissions:", err);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+
+
+checkSheetRoute.get('/submission/status-counts/:orgId', async (req, res) => {
+  try {
+    const {orgId}=req.params;
+    const submissions = await prismaClient.submission.findMany({
+      where:{
+        organizationId:orgId
+      },select: {
+        status: true
+      }
+    });
+
+    const counts = {
+      Pending: 0,
+      Approved: 0,
+      Rejected: 0
+    };
+
+    for (const sub of submissions) {
+      if (sub.status === 'Pending') counts.Pending += 1;
+      else if (sub.status === 'Approved') counts.Approved += 1;
+      else if (sub.status === 'Rejected') counts.Rejected += 1;
+    }
+
+    return res.status(200).json({ success: true, counts });
+  } catch (err) {
+    console.error("Error fetching status counts:", err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
 checkSheetRoute.get('/submissionsByUser/:id', async (req, res) => {
   try {
-    const { id} = req.params;
-    const user=await prismaClient.user.findUnique({
-      where:{
-        id:id
-      }
-    })
-let userName;
-    if(user){
-      userName=user.name;
-    }else{
-      return res.status(5000).json({message:"User not found"})
+    const { id } = req.params;
+    const { startTime, endTime } = req.query; // Accept from query string
+
+    // Find user by ID
+    const user = await prismaClient.user.findUnique({
+      where: { id }
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
 
+    // Convert time strings to Date if provided
+    const start = startTime ? new Date(startTime) : null;
+    const end = endTime ? new Date(endTime) : null;
+
+    // Dynamic where clause
+    const whereClause = {
+      userId: id,
+      ...(start || end ? {
+        createdAt: {
+          ...(start && { gte: start }),
+          ...(end && { lte: end }),
+        }
+      } : {})
+    };
+
     const submissions = await prismaClient.submission.findMany({
-      where: { userId:id},
-	    include:{
-        user:{
-          select:{
-            name:true
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            name: true
           }
         }
       }
     });
-	  
+
     return res.status(200).json(submissions);
   } catch (err) {
-    console.error("Error fetching tables for user:", err);
+    console.error("Error fetching submissions:", err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -214,18 +288,30 @@ checkSheetRoute.get('/submissionsById/:id', async (req, res) => {
 
 
 
+
 checkSheetRoute.put('/setStatus/:submissionId', async (req, res) => {
   try {
     const { submissionId } = req.params;
-    const { status,comment="" } = req.body;
+    const { status,comment="" ,ApprovedBy} = req.body;
 
     // Allow only "accept" or "reject"
 
     // Update the submission
+    if(!ApprovedBy){
+      return res.json({message:"please send Approving user's id "})
+    }
+    const user=await prismaClient.user.findUnique({
+      where:{
+        id:ApprovedBy
+      }
+    })
+    const name=user.name;
     const updatedSubmission = await prismaClient.submission.update({
       where: { id:submissionId},
-      data: { status:status ,comment:comment},
+      data: { status:status ,comment:comment , ApprovedBy:name},
     });
+
+    
 
     return res.status(200).json({
       success: true,
@@ -240,7 +326,6 @@ checkSheetRoute.put('/setStatus/:submissionId', async (req, res) => {
     });
   }
 });
-
 
 checkSheetRoute.get("/getTables/:orgId", async (req, res) => {
 const {orgId}=req.params

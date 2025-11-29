@@ -112,7 +112,8 @@ LineRouter.get('/getLines/:orgId',async (req, res)=>{
         const {orgId} = req.params
         const Lines=await prismaClient.line.findMany({
           where:{
-            organizationId:req.params.orgId
+            organizationId:req.params.orgId,
+		  lineType:"mainLine"
           },
           include:{
             shiftTimings:true,
@@ -121,10 +122,61 @@ LineRouter.get('/getLines/:orgId',async (req, res)=>{
             devices:true
           }
         });
-        res.status(200).json({Lines:Lines , status:"success"})
+
+	            const idealParams=await prismaClient.idealParameters.findMany();
+
+        res.status(200).json({Lines:Lines,idealParams:idealParams , status:"success"})
       }catch(e){
         res.status(404).json({message:"Line not found"})
       }
 })
+
+
+LineRouter.get('/getStation/:orgId',async (req, res)=>{
+  try{
+      const {orgId} = req.params
+      
+      const Lines=await prismaClient.station.findMany({
+        where:{
+          line:{
+            organizationId:orgId
+          }
+        },
+        include:{
+          line:true,
+          torqueGuns:true,
+        }
+      });
+      res.status(200).json({stations:Lines , status:"success"})
+    }catch(e){
+      res.status(404).json({message:"Line not found"})
+    }
+})
+
+
+
+LineRouter.put('/setStatusLine/:lineId',async (req, res)=>{
+  try{
+    const {status}=req.body;
+	  console.log(status)
+    if( status!=="Active" &&  status!=="Inactive"){
+      return res.status(500).json({message:"Invalid Status , it must be Active or Inactive"})
+    }
+      const {lineId} = req.params
+      const Orgs=await prismaClient.line.update({
+        where:{
+          lineId:lineId
+        },
+        data:{
+          status:status
+        }
+      });
+      res.status(200).json({message:`Status updated to ${status}`, status:"success"})
+    }catch(e){
+      res.status(404).json({message:"Line not found", error:e})
+    }
+})
+
+
 
 module.exports=LineRouter;

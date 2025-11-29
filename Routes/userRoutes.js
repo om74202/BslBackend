@@ -1,22 +1,28 @@
 const express = require('express');
 const prismaClient = require('../lib/prismaClient');
-const { hashPassword, comparePassword } = require('../functions/userFunctions');
+const { hashPassword, comparePassword,SendMailToUser  } = require('../functions/userFunctions');
 const JWT =require('jsonwebtoken');
 const userRouter=express.Router();
 const bcrypt=require('bcrypt');
 const { isSignedIn } = require('../middlewares/userMiddlewares');
 
 userRouter.post('/register',async (req,res)=>{
-    const {name , email , password , role , address , phoneNumber , organizationId,uploadImageUrl ,lines=[]}=req.body;
-
+    const {name , email , password , role , address , phoneNumber , organizationId,uploadImageUrl ,lineName=[]}=req.body;
+    const lines=lineName;
     if (!name) return res.status(400).send({ message: "Name is required" });
     if (!email) return res.status(400).send({ message: "Email is required" });
     if (!password) return res.status(400).send({ message: "Password is required" });
     if (!role) return res.status(400).send({ message: "Role is required" });
     if (!phoneNumber) return res.status(400).send({ message: "Phone number is required" });
 
-    if (!['SuperAdmin', 'Admin','SuperUser','CheckSheetUser', 'User'].includes(role)) {
+    if (!['SuperAdmin', 'Admin','SuperUser','CheckSheetUser', 'User','CEO'].includes(role)) {
         return res.send({ message: "Invalid role" });
+      }
+
+	if(role!=="Admin" && role!=="SuperAdmin"){
+        if(lines.length===0){
+          return res.status(500).send({ message: "User must be assigned to atleast one line" });
+        }
       }
 
       const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -54,6 +60,7 @@ userRouter.post('/register',async (req,res)=>{
 
 
         console.time("register")
+	    SendMailToUser(email,password,name , organizationName="Bharat Seats, Kharkhoda")
 
         const user =await prismaClient.user.create({
             data:{
@@ -82,71 +89,120 @@ userRouter.post('/register',async (req,res)=>{
 })
 
 
-userRouter.post('/login' , async (req, res)=>{
-    const {email,password}=req.body;
 
-    // Validate the request body parameters
-    if (!email || !password) {
-        return res.status(404).send({
-          success: false,
-          message: "Invalid email or password",
-        });
+userRouter.put('/updateProfile/:id', async (req, res) => {
+  const { name, phoneNumber, uploadImageUrl } = req.body;
+  const {id}=req.params
+        console.log(req.body)
+
+  if (!id) {
+    return res.status(400).json({ message: "User ID is required." });
+  }
+
+  try {
+    // Check if user exists
+    const existingUser = await prismaClient.user.findUnique({
+      where: { id:id }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Update allowed fields
+    const updatedUser = await prismaClient.user.update({
+      where: { id:id },
+      data: {
+              name:name,
+              phoneNumber:phoneNumber,
+              uploadImageUrl:uploadImageUrl
       }
+    });
 
-      const user=await prismaClient.user.findUnique({
-        where:{
-            email:email
-        }
-      })
-
-      if (!user) {
-        return res.status(404).send({
-          success: false,
-          message: "Email is not registerd",
-        });
-      }
-
-      if (user.status == "Inactive") {
-        return res.status(404).send({
-          success: false,
-          message: "Please connect to organisation",
-        });
-      }
-      const passwordMatch=await comparePassword(password,user.password);
-      if (!passwordMatch) {
-        return res.status(200).send({
-          success: false,
-          message: "Invalid Password",
-        });
-      }
-      const id=user.id;
-
-      const token = JWT.sign({id:user.id,email:user.email,role:user.role},process.env.JWT_SECRET_KEY)
-
-      res.cookie("authToken", token,{
-  httpOnly: true,       // 🚫 Blocks JavaScript access
-  secure: false,        // ✅ false for development over HTTP (⚠️ must be true in production with HTTPS)
-  sameSite: "Lax",      // ⚠️ 'Strict' blocks some auth flows; 'Lax' is usually fine for logged-in apps
-  maxAge: 24 * 60 * 60 * 1000 // 1 day
+    return res.status(200).json({ message: "Profile updated successfully", user: updatedUser });
+  } catch (error) {
+    console.error("Update profile error:", error);
+    return res.status(500).json({ message: "Internal Server Error", error });
+  }
 });
 
-      req.session.user = {
-        id: id,
+
+userRouter.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // ✅ Validate the request body parameters
+    if (!email || !password) {
+      return res.status(404).send({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    const user = await prismaClient.user.findUnique({
+      where: {
         email: email,
-        role: user.role,
-      };
-      
+      },
+    });
 
-      res.status(200).send({
-        status:"success",
-        message:"Login Successfull",
-        token:token,
-        user:user
-      })
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "Email is not registered",
+      });
+    }
 
+    if (user.status === "Inactive") {
+      return res.status(404).send({
+        success: false,
+        message: "Please connect to organisation",
+      });
+    }
 
-  
-})
+    const passwordMatch = await comparePassword(password, user.password);
+    if (!passwordMatch) {
+      return res.status(200).send({
+        success: false,
+        message: "Invalid Password",
+      });
+    }
+
+    const id = user.id;
+    const token = JWT.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET_KEY
+    );
+
+    res.cookie("authToken", token, {
+      httpOnly: true, // 🚫 Blocks JavaScript access
+      secure: false,  // ✅ false for dev; ⚠️ must be true in production (HTTPS)
+      sameSite: "Lax",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    });
+
+    req.session.user = {
+      id,
+      email,
+      role: user.role,
+    };
+
+    return res.status(200).send({
+      status: "success",
+      message: "Login Successful",
+      token,
+      user,
+    });
+  } catch (error) {
+    console.error("❌ Login error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: error,
+      error: error.message,
+    });
+  }
+});
+
 
 userRouter.post('/logout',isSignedIn,async(req,res)=>{
     res.clearCookie("authToken"); 
@@ -226,7 +282,8 @@ userRouter.get('/getUser/:orgId',async(req,res)=>{
         organizationId:req.params.orgId
       },
       include:{
-        lines:true
+        lines:true,
+	      organization:true
       }
     });
     res.status(200).json({users:users , status:"success"})
@@ -253,10 +310,37 @@ userRouter.get('/getUser/:emailId',async(req,res)=>{
 
 userRouter.get('/getUser',async(req,res)=>{
   try{
-    const users=await prismaClient.user.findMany();
+	  const users=await prismaClient.user.findMany({
+      include:{
+        lines:true,
+	      organization:true
+      }
+    });
     res.status(200).json({users:users , status:"success"})
   }catch(e){
     res.status(404).json({message:"User not found"})
   }
+})
+
+
+userRouter.put('/setStatusUser/:userId',async (req, res)=>{
+  try{
+    const {status}=req.body;
+    if( status!=="Active" && status!=="Inactive"){
+      return res.status(500).json({message:"Invalid Status , it must be Active or Inactive"})
+    }
+      const {userId} = req.params
+      const user=await prismaClient.user.update({
+        where:{
+          id:userId
+        },
+        data:{
+          status:status
+        }
+      });
+      res.status(200).json({message:`Status updated to ${status}`, status:"success"})
+    }catch(e){
+      res.status(404).json({message:"User not found", error:e})
+    }
 })
 module.exports=userRouter;
