@@ -74,6 +74,7 @@ model Line {
   lineName            String
   noOfCustomShifts    Int
   noOfShifts          Int
+  targetJPH           Int?                      //target Ideal JPH 
   noOfStations        Int
   lineType            lineType              @default(mainLine)
   status              Status                @default(Active)
@@ -85,8 +86,20 @@ model Line {
   users               User[]                @relation("UserLine")
   maintenances        Maintenance[]
   downtime            DowntimeManagement[]
-
+  downTimeReports     DowntimeReport[]
+  plannedShutdowns    PlannedShutdown[]  @relation("LinePlannedShutdowns")
+  targetJPHUpdateHistory   TargetJPHUpdateHistory[]
   @@unique([lineName, organizationId])
+}
+
+model TargetJPHUpdateHistory {
+  id            String @id @default(uuid())
+  userId        String
+  user          User @relation(fields: [userId],references: [id])
+  updatedAt     DateTime @default(now())
+  lineId        String
+  updatedValue  Int?
+  line          Line @relation(fields: [lineId],references: [lineId])
 }
 
 model Station {
@@ -146,6 +159,10 @@ model User {
   lastLogin        DateTime?
   organizationId   String
   uploadImageUrl   String?
+  targetJPHUpdateHistory  TargetJPHUpdateHistory[]
+  plannedShutdownUpdateHistory    PlannedShutdownUpdateHistory[]
+  plannedShutdowns PlannedShutdown[]
+  downTimeReports  DowntimeReport[]
   checksheetTables ChecksheetTable[]
   submissions      Submission[]
   organization     Organization      @relation(fields: [organizationId], references: [id])
@@ -197,11 +214,74 @@ model DowntimeManagement{
   line            Line @relation(fields: [lineId],references: [lineId])
 }
 
-model DowntimeReasons{
-  id             Int @id @default(autoincrement())
-  name           String @unique
-  options        String[]
+model ProductionLossReasons{
+  id             String @id @default(uuid())
+  lossCode       String 
+  lossReason     String
+  lossSubReason        String[]
 }
+
+//holiday section
+
+model PlannedShutdown{
+  id             String @id @default(uuid())
+  name           String @unique
+  type           shutdownType 
+  startTime      DateTime?
+  endTime        DateTime?
+  createdBy      String?
+  reason         String?
+  createdAt      DateTime @default(now())
+  description    String?
+  updateHistory  PlannedShutdownUpdateHistory[]
+   downtimeReportId String?
+  downtimeReport   DowntimeReport? @relation("DowntimeReportToPlannedShutdown", fields: [downtimeReportId], references: [id])
+
+  lines           Line[]      @relation("LinePlannedShutdowns")
+  user           User?    @relation(fields: [createdBy],references: [id])
+}
+
+model PlannedShutdownUpdateHistory{
+  id            String @id @default(uuid())
+  userId        String
+  user          User @relation(fields: [userId],references: [id])
+  updatedAt     DateTime @default(now())
+  plannedShutdownId    String
+  updatedValue   Json
+  plannedShutdown     PlannedShutdown @relation(fields: [plannedShutdownId],references:[id])
+}
+
+enum shutdownType {
+  Holiday
+  PlannedShutdown
+  UnplannedDowntime
+}
+
+model DowntimeReport {
+  id            String   @id @default(uuid())
+  lineId        String
+  line          Line     @relation(fields: [lineId], references: [lineId])
+
+  shift         String
+  reportDate    DateTime
+  isSubmitted   Boolean @default(false)     
+  createdAt     DateTime @default(now())
+  plannedShutdowns       PlannedShutdown[]  @relation("DowntimeReportToPlannedShutdown")
+  
+  createdBy     String?
+  user          User?    @relation(fields: [createdBy], references: [id])
+  rows          Json     // ✅ store rows here
+  @@unique([lineId, reportDate, shift])
+}
+
+
+
+
+
+
+
+
+
 
 model Maintenance{
   id      String @id @default(uuid())
@@ -238,6 +318,39 @@ model Submission {
   user           User             @relation(fields: [userId], references: [id])
 }
 
+model Truck {
+  id            String   @id @default(cuid())
+  name          String   @unique  
+  alias         String?
+  status        TruckStatus  @default(Stopped)
+  data          Json
+  trips         Trip[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Trip {
+  id            String   @id @default(uuid())
+  departBsl     DateTime? 
+  reachedMsil       DateTime?
+  departMsil      DateTime?
+  reachedBsl     DateTime?
+  truckId       String
+  createdAt   DateTime @default(now()) 
+  updatedAt   DateTime @updatedAt    
+  truck         Truck     @relation(fields: [truckId],references: [id])
+}
+
+enum TruckStatus{
+  toMSIL
+  toBSL
+  atBSL
+  Stopped
+  atMSIL
+}
+
+
+
 enum DowntimeType {
   Planned
   Unplanned
@@ -249,7 +362,7 @@ enum SubmissionStatus {
   Rejected
 }
 
-enum maintenanceStatus{
+enum maintenanceStatus {
   open
   close
 }

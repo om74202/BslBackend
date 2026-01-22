@@ -12,12 +12,21 @@ const cookieParser = require('cookie-parser');
 const torqueRouter = require('./Routes/torqueGun');
 const driveRouter = require('./Routes/drive');
 const checkSheetRoute = require('./Routes/checkSheet');
+const lossReasonsRouter = require('./Routes/lossReasons');
+const plannedShutdownRouter = require('./Routes/plannedShutdown.js');
 const maintenanceRouter = require('./Routes/Maintenance');
 const downtimeRouter = require('./Routes/downtime.js');
+const downtimeReportRouter = require('./Routes/downtimeReport');
+const { calculateNotPingTime, isPingAllowedNow,initPingGuardSubscriber } = require('./functions/pingGuard.js');
 const multer = require('multer');
+const gpsTrackingRouter = require('./Routes/gpsTracking.js');
 const upload=multer()
+const { createDevicePoller } = require('./functions/gpsTracking.js');
 require('dotenv').config({ path: '.env.influx' });
 require('./Routes/Websocket');
+const { maybeSendDailyShiftReports } = require('./functions/performancePoller.js');
+
+
 const http = require('http');
 const  idealParamRoute = require('./Routes/idealParams');
 
@@ -32,11 +41,25 @@ app.use(
     allowedHeaders: ['Authorization', 'Content-Type']
   }))
 
+let rules=null;
 
+  async function bootRules() {
+  rules = await calculateNotPingTime();
+   console.log("[pingRules] loaded:", rules);
+}
+bootRules();
 
-
+initPingGuardSubscriber({ topic: "update" });
 
 function pingRunModeAPI() {
+	    if (!isPingAllowedNow(rules)) {
+    // optional log
+    console.log("[ping] blocked by rules");
+    return;
+  }
+      maybeSendDailyShiftReports()
+
+
   fetch("http://localhost:3001/api/influx/check-runmode", {
     method: "POST",
     headers: {
@@ -72,12 +95,29 @@ function scheduleNextRun() {
 
   setTimeout(() => {
     pingRunModeAPI();
-    setInterval(pingRunModeAPI, 5 * 60 * 1000); // repeat every 5 minutes after that
+    setInterval(pingRunModeAPI, 5* 60 * 1000); // repeat every 5 minutes after that
   }, delay);
 }
 
 scheduleNextRun();
 
+
+
+
+(async () => {
+  const poller = await createDevicePoller({
+    pollIntervalMs: 30000,
+    concurrency: 8,
+    refreshTrucksEveryPolls: 10,
+    geofence: {
+      BSL: { radiusM: 160 },
+      MSIL: { radiusM: 70 },
+      stableHits: 2,
+    },
+  });
+
+  poller.start();
+})();
 async function runSendBitEmails() {
   try {
     console.log("Running sendBitEmails at:", new Date().toISOString());
@@ -118,9 +158,13 @@ app.use('/api/influx',influxRouter);
 app.use('/api/org',organisationRouter)
 app.use('/api/line',LineRouter);
 app.use('/api/device',deviceRouter);
+app.use('/api/downtime-report', downtimeReportRouter);
+app.use('/api/loss-reason', lossReasonsRouter);
+app.use(`/api/planned-shutdown`,plannedShutdownRouter)
 app.use('/api/maintenance',maintenanceRouter)
 app.use(`/api/downtime`,downtimeRouter)
 app.use(`/api/productionPlanning`,idealParamRoute);
+app.use(`/api/gpsTracking`,gpsTrackingRouter)
 app.use('/api/torque/',torqueRouter);
 app.use('/api/drive',driveRouter);
 app.use('/api/checksheet',upload.single("checksheetData"),checkSheetRoute);

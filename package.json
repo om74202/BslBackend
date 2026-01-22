@@ -13,7 +13,7 @@
     "@influxdata/influxdb-client": "^1.35.0",
     "@influxdata/influxdb-client-apis": "^1.35.0",
     "@prisma/client": "^6.7.0",
-    "axios": "^1.9.0",
+    "axios": "^1.13.2",
     "bcrypt": "^5.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -23,10 +23,15 @@
     "express": "^5.1.0",
     "express-session": "^1.18.1",
     "jsonwebtoken": "^9.0.2",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
     "jwt-decode": "^4.0.0",
+    "mqtt": "^5.14.1",
     "multer": "^2.0.0",
     "nodemailer": "^7.0.3",
     "nodemon": "^3.1.10",
+    "p-limit": "^2.3.0",
+    "pdf-lib": "^1.17.1",
     "prisma": "^6.7.0"
   }
 }

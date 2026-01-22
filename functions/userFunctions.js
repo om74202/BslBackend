@@ -3,6 +3,94 @@ const jwt = require('jsonwebtoken');
 const nodemailer=require('nodemailer')
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Reuse a single transporter (better than creating every time)
+const getMailerTransporter = () => {
+  return nodemailer.createTransport({
+    host: "smtp.office365.com",
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.BSL_MAIL,
+      pass: process.env.BSL_PASSWORD,
+    },
+  });
+};
+
+/**
+ * Send Performance Report PDF as attachment.
+ * to can be string or array of emails
+ */
+const sendPerformanceReportPdfMail = async ({
+  to,
+  cc,
+  bcc,
+  subject,
+  html,
+  pdfBuffer,
+  fileName = "Performance_Report.pdf",
+}) => {
+  if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) {
+    throw new Error("pdfBuffer must be a Buffer");
+  }
+
+  if (!to || (Array.isArray(to) && to.length === 0)) {
+    throw new Error("Recipient email(s) required");
+  }
+
+  const transporter = getMailerTransporter();
+
+  const mailOptions = {
+    from: process.env.BSL_MAIL,
+    to, // can be string or array
+    cc,
+    bcc,
+    subject: subject || "Performance Report",
+    html:
+      html ||
+      `<div style="font-family: Arial, sans-serif; color:#333;">
+        <p>Please find the attached Performance Report PDF below.</p>
+      </div>`,
+    attachments: [
+      {
+        filename: fileName,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      },
+    ],
+  };
+
+  // sendMail returns a promise if you don't pass a callback
+  return await transporter.sendMail(mailOptions);
+};
+
+
+
+
+
+
+
+
+
+
+
 const hashPassword = async (password) => {
     try {
       const salt = 10;
@@ -116,7 +204,71 @@ function formatDurationString(durations) {
     .join(", ");
 }
 
-const SendMailToUserAlert = async (email, info ,lineName="Front Line") => {
+
+
+const SendMailToUserAlert = async (email, message, lineName, duration) => {
+  console.log(email, message, lineName, duration, "inside the mail function");
+
+  const transporter = nodemailer.createTransport({
+    host: "smtp.office365.com",
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.BSL_MAIL,
+      pass: process.env.BSL_PASSWORD,
+    },
+  });
+
+  // Convert "Downtime Alert:\nLine: ...\nLine: ..." into HTML safely
+  const safeMessage = String(message || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br/>");
+
+  const mailOptions = {
+    from: process.env.BSL_MAIL,
+    to: email,
+    subject: `DOWNTIME ALERT: ${lineName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 18px; color: #000;">
+        <h2 style="margin: 0 0 14px 0; font-size: 24px; font-weight: 700;">
+          Downtime Alert
+        </h2>
+
+        <p style="margin: 0 0 12px 0; font-size: 18px; line-height: 1.6;">
+          A downtime condition has been detected at BSL Kharkhoda Plant.
+        </p>
+
+        <!-- No border, bigger text -->
+        <div style="margin: 14px 0; padding: 12px;">
+          <div style="font-size: 18px; line-height: 1.7; white-space: normal;">
+            ${safeMessage}
+          </div>
+        </div>
+
+        <p style="margin: 14px 0 0 0; font-size: 18px; line-height: 1.6;">
+          Please take corrective action to resume operations.
+        </p>
+
+        <p style="margin: 20px 0 0 0; font-size: 14px; line-height: 1.5;">
+          This is an automated alert from the BSL Digital Factory application.
+        </p>
+      </div>
+    `,
+  };
+
+  transporter.sendMail(mailOptions, function (error) {
+    if (error) {
+      console.log("Error:", error);
+    } else {
+      console.log("Email sent:", email);
+    }
+  });
+};
+
+
+const SendMailToUserAlert222 = async (email, info ,lineName="Front Line") => {
 	console.log(email,info , lineName,"inside the mail function");
   const transporter = nodemailer.createTransport({
 	  host: 'smtp.office365.com',
@@ -298,5 +450,5 @@ const SendEmailDispatchDelay = async (email,message) => {
 
 
 
-  module.exports={comparePassword,hashPassword,getRole , SendMailToUser, SendMailToUserAlert , SendMailNUCAlert , SendMailNUCRestored ,SendEmailDispatchDelay}
+  module.exports={comparePassword,hashPassword,getRole,sendPerformanceReportPdfMail , SendMailToUser, SendMailToUserAlert , SendMailNUCAlert , SendMailNUCRestored ,SendEmailDispatchDelay}
 

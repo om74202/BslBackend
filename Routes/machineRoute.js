@@ -1,5 +1,6 @@
 const express = require('express');
 const prismaClient  = require('../lib/prismaClient');
+const { updateTargetJPH, getTargetJPHUpdateHistory, getJphHistoryForShift } = require('../Controllers/lineController');
 
 const LineRouter=express.Router();
 
@@ -177,6 +178,9 @@ LineRouter.put('/setStatusLine/:lineId',async (req, res)=>{
     }
 })
 
+LineRouter.patch('/update-jph',updateTargetJPH)
 
+LineRouter.get(`/jph-history/`,getTargetJPHUpdateHistory)
+LineRouter.get(`/jph-history/shift`,getJphHistoryForShift)
 
 module.exports=LineRouter;

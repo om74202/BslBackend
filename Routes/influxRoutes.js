@@ -3,8 +3,10 @@ const { influxDB } = require('../db/influxDB/influx');
 const { QueryApi } = require('@influxdata/influxdb-client');
 const { SendMailToUserAlert , SendMailNUCAlert,SendMailNUCRestored,SendEmailDispatchDelay} = require('../functions/userFunctions');
 const { createDowntime2 } = require('../Controllers/downtime');
+const { saveLatestDowntime, getLatestDowntimeForLineName} = require('../Controllers/plannedShutdown');
 const {format,parseISO} = require('date-fns')
 const influxRouter = express.Router();
+const { getDowntimeReportByLineDateShiftCumulative } = require('../Controllers/influxControllers.js');
 const queryApi = influxDB.getQueryApi("BSL Kharkhoda");
 
 function convertUTCToISTTimeOnly(isoTime) {
@@ -97,6 +99,205 @@ console.log(shift,selectedDate)
     endTime: result.end
   };
 }
+influxRouter.get('/SingleTorqueGun/data/:shift/:date/:torquegunName/:station', async (req, res) => {
+  try {
+    const { shift, date,torquegunName,station } = req.params;
+    const selectedDate = date ? new Date(date) : new Date();
+
+    const { startTime, endTime } = getShiftTiming(shift, selectedDate);
+    if (!startTime || !endTime) {
+      throw new Error("Start time or end time is undefined.");
+    }
+
+    const bucket = `SHIFT_${shift}`;
+    const measurement = "TORQUE";
+
+    // --- Read query params (support single or comma-separated values) ---
+   // const { torquegunName, station: stationQuery } = req.query;
+
+    const torqueNames = torquegunName
+      ? (Array.isArray(torquegunName)
+          ? torquegunName.flatMap(s => s.split(',').map(x => x.trim()).filter(Boolean))
+          : torquegunName.split(',').map(x => x.trim()).filter(Boolean))
+      : null;
+
+    const stationNames = station
+      ? (Array.isArray(station)
+          ? station.flatMap(s => s.split(',').map(x => x.trim()).filter(Boolean))
+          : station.split(',').map(x => x.trim()).filter(Boolean))
+      : null;
+
+    // --- Default lists (used only if corresponding query param not provided) ---
+    const torqueGunsDefault = ['torque_gun_1', 'torque_gun_2', 'torque_gun_3'];
+    const stationsDefault = [
+      'Station 10A', 'Station 10B', 'Station 10L1','Station 10R1',
+      'Station 40A', 'Station ST30', 'Station ST40' ,'Station 40E', 'Station ST40B'
+    ];
+
+    // Choose which lists to use for building filters
+    const torqueListToUse = torqueNames && torqueNames.length ? torqueNames : torqueGunsDefault;
+    const stationListToUse = stationNames && stationNames.length ? stationNames : stationsDefault;
+
+    // Build safe filter expressions
+    const stationFilterExpr = stationListToUse
+      .map(s => `r.station == "${s.replace(/"/g, '\\"')}"`)
+      .join(' or ');
+
+    const torqueFilterExpr = torqueListToUse
+      .map(t => `r.torque_gun == "${t.replace(/"/g, '\\"')}"`)
+      .join(' or ');
+
+    // Use ISO strings for Flux time() to be safe
+    const startIso = (startTime instanceof Date) ? startTime.toISOString() : new Date(startTime).toISOString();
+    const endIso = (endTime instanceof Date) ? endTime.toISOString() : new Date(endTime).toISOString();
+
+    // Build Flux query
+    const fluxQuery = `
+      from(bucket: "${bucket}")
+        |> range(start: time(v: "${startIso}"), stop: time(v: "${endIso}"))
+        |> filter(fn: (r) => r._measurement == "${measurement}")
+        |> filter(fn: (r) => (${stationFilterExpr}))
+        |> filter(fn: (r) => (${torqueFilterExpr}))
+        |> aggregateWindow(every: 10s, fn: last, createEmpty: false)
+        |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
+        |> sort(columns: ["_time"], desc: true)
+    `;
+
+    // Execute query
+    const results = [];
+    const queryStartMs = Date.now();
+
+    await new Promise((resolve, reject) => {
+      queryApi.queryRows(fluxQuery, {
+        next(row, tableMeta) {
+          try {
+            results.push(tableMeta.toObject(row));
+          } catch (parseError) {
+            console.warn('Row parsing error:', parseError);
+          }
+        },
+        error(error) {
+          console.error('Query execution error:', error);
+          reject(error);
+        },
+        complete() {
+          console.log(`Query completed in ${Date.now() - queryStartMs}ms`);
+          resolve();
+        }
+      });
+    });
+
+    // --- existing processing (unchanged) ---
+    let connected = 0;
+    let disconnected = 0;
+    let alertsCount = 0;
+
+    const groupedData = results.reduce((acc, current) => {
+      const station = current.station;
+      const torqueGun = current.torque_gun;
+      const time = current._time;
+      const torqueValue = current.torque_value;
+      const angle = current.angle;
+      const isConnected = current.connection_status === 'connected';
+
+      if (!acc[station]) {
+        acc[station] = {
+          recoveredSequenceNo: [],
+          sequenceNo: [],
+          torqueGuns: {},
+          connectionStatus: isConnected,
+          firstConnectionUpdate: time
+        };
+      }
+
+      if (current.sequence_no) {
+        acc[station].sequenceNo.push({
+          Sequence_Number: current.sequence_no,
+          time: format(new Date(time), 'HH:mm')
+        });
+      } else if (current.recovered_sequence_no) {
+        acc[station].recoveredSequenceNo.push({
+          Sequence_Number: current.recovered_sequence_no,
+          time: format(new Date(time), 'HH:mm')
+        });
+      }
+
+      if (!acc[station].torqueGuns[torqueGun]) {
+        acc[station].torqueGuns[torqueGun] = {
+          torqueData: [],
+          angleData: [],
+          first: {
+            connectionStatus: isConnected,
+            timeOfStatus: time
+          },
+          hasValidPassData: false
+        };
+      }
+
+      const gunData = acc[station].torqueGuns[torqueGun];
+
+      if (!gunData.hasValidPassData) {
+        const passDataValid = current.pass_count !== null && current.pass_percentage !== null;
+        if (passDataValid) {
+          gunData.hasValidPassData = true;
+          Object.keys(current).forEach(key => {
+            if (!['torque_value', 'angle', 'station', 'torque_gun', '_time'].includes(key)) {
+              if (current[key] !== null && !gunData.first.hasOwnProperty(key)) {
+                gunData.first[key] = current[key];
+              }
+            }
+          });
+          if (!gunData.first.hasOwnProperty('connectionStatus')) {
+            gunData.first.connectionStatus = isConnected;
+          }
+        }
+      }
+
+      gunData.torqueData.push({
+        time: format(new Date(time), 'HH:mm'),
+        value: torqueValue
+      });
+
+      gunData.angleData.push({
+        time: format(new Date(time), 'HH:mm'),
+        value: angle
+      });
+
+      return acc;
+    }, {});
+
+    Object.keys(groupedData).forEach(station => {
+      if (groupedData[station]?.connectionStatus === true) connected++;
+      Object.keys(groupedData[station].torqueGuns).forEach(torqueGun => {
+        groupedData[station].torqueGuns[torqueGun].torqueData.sort((a, b) =>
+          new Date(a.time) - new Date(b.time)
+        );
+        groupedData[station].torqueGuns[torqueGun].angleData.sort((a, b) =>
+          new Date(a.time) - new Date(b.time)
+        );
+      });
+    });
+
+    res.json({
+      success: true,
+      data: groupedData,
+      connected,
+      disconnected,
+      latestData: getLatestValidTorque(results),
+      alerts: alertsCount,
+      lastData: results[0],
+      message: "Data fetched successfully"
+    });
+
+  } catch (err) {
+    console.error('Endpoint error:', err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      message: "Failed to fetch torque data"
+    });
+  }
+});
 
 
 influxRouter.get('/torqueGun/data/:shift/:date', async (req, res) => {
@@ -303,6 +504,170 @@ console.timeEnd("dataSorting")
   }
 });
 
+
+
+
+// GET /drive/data/:drive/:shift/:date
+influxRouter.get('/SingleDrive/data/:drive/:shift/:date', async (req, res) => {
+  try {
+    const { drive, shift, date } = req.params;
+    if (!drive) return res.status(400).json({ success: false, message: "drive param required" });
+
+    const selectedDate = date ? new Date(date) : new Date();
+    const { startTime, endTime } = getShiftTiming(shift, selectedDate);
+
+    if (!startTime || !endTime) {
+      return res.status(400).json({ success: false, message: "Invalid shift timing" });
+    }
+
+    const bucket = `SHIFT_${shift}`;
+    const measurement = 'DRIVE';
+
+    // Build flux query for single drive
+    const fluxQuery = `
+      from(bucket: "${bucket}")
+        |> range(start: time(v: "${startTime}"), stop: time(v: "${endTime}"))
+        |> filter(fn: (r) => r._measurement == "${measurement}")
+        |> filter(fn: (r) => r.drive == "${drive}")
+        |> filter(fn: (r) => r._field == "amp" or r._field == "volt" or r._field == "freq" or r._field == "running_count" or r._field == "stopped_count" or r._field == "status" or r._field == "amp_status")
+        |> aggregateWindow(every: 30s, fn: last, createEmpty: false)
+        |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
+        |> sort(columns: ["_time"], desc: false)
+    `;
+
+    const rows = [];
+    const queryStart = Date.now();
+
+    await new Promise((resolve, reject) => {
+      queryApi.queryRows(fluxQuery, {
+        next(row, tableMeta) {
+          try {
+            rows.push(tableMeta.toObject(row));
+          } catch (parseError) {
+            console.warn('Row parse error:', parseError);
+          }
+        },
+        error(err) {
+          console.error('Influx query error:', err);
+          reject(err);
+        },
+        complete() {
+          console.log(`Single-drive query completed in ${Date.now() - queryStart}ms`);
+          resolve();
+        }
+      });
+    });
+
+    // Process rows for single drive
+    let alertCount = 0;
+    const driveResult = {
+      ampData: [],
+      voltData: [],
+      freqData: [],
+      lastNonZero: { amp: null, volt: null, freq: null },
+      latestStatus: null,
+      latestStatusTime: null,
+      // optional fields for ALL-like summary (if drive === 'ALL')
+      latestRunningCount: null,
+      latestStoppedCount: null,
+      latestUpdateTime: null,
+      ampStatus: null,
+    };
+
+    // Store all status data to find the latest
+    const statusData = [];
+
+    // rows are sorted desc by _time; we want to push in chronological or keep desc? 
+    // We'll keep the same order as your original (push in iteration order) and set latest values from last encountered.
+    for (const r of rows) {
+      const displayTime = format(new Date(r._time), 'HH:mm');
+      const amp = typeof r.amp === 'number' ? r.amp : (r.amp ? Number(r.amp) : 0);
+      const volt = typeof r.volt === 'number' ? r.volt : (r.volt ? Number(r.volt) : 0);
+      const freq = typeof r.freq === 'number' ? r.freq : (r.freq ? Number(r.freq) : 0);
+      const status = r.status;
+      const ampStatus = r.amp_status;
+      const runningCount = r.running_count;
+      const stoppedCount = r.stopped_count;
+
+      // count alerts (non-PASS amp_status)
+      if (ampStatus && ampStatus !== "PASS") alertCount++;
+
+      // Store status data for latest check (for both ALL and individual drives)
+      if (status || ampStatus) {
+        statusData.push({
+          time: r._time, // Keep original timestamp for comparison
+          displayTime: displayTime,
+          status: status,
+          ampStatus: ampStatus,
+          runningCount: runningCount,
+          stoppedCount: stoppedCount
+        });
+      }
+
+      // Capture latest summary if drive === 'ALL' (similar to your other route)
+      if (drive === 'ALL') {
+        if (driveResult.latestUpdateTime === null) {
+          driveResult.latestRunningCount = runningCount ?? driveResult.latestRunningCount;
+          driveResult.latestStoppedCount = stoppedCount ?? driveResult.latestStoppedCount;
+          driveResult.latestUpdateTime = displayTime;
+          driveResult.ampStatus = ampStatus ?? driveResult.ampStatus;
+        }
+        // continue - we don't store time-series for ALL
+        continue;
+      }
+
+      // For individual drive, collect series and latest status/time
+      driveResult.ampData.push({ time: displayTime, value: amp });
+      driveResult.voltData = driveResult.voltData || [];
+      driveResult.voltData.push({ time: displayTime, value: volt });
+      driveResult.freqData = driveResult.freqData || [];
+      driveResult.freqData.push({ time: displayTime, value: freq });
+
+      if (amp && amp !== 0) driveResult.lastNonZero.amp = amp;
+      if (volt && volt !== 0) driveResult.lastNonZero.volt = volt;
+      if (freq && freq !== 0) driveResult.lastNonZero.freq = freq;
+    }
+
+    // Find the latest status from statusData
+    if (statusData.length > 0) {
+      // Sort by time in descending order to get the latest
+      statusData.sort((a, b) => new Date(b.time) - new Date(a.time));
+      
+      // Get the most recent entry with status or ampStatus
+      const latestStatusEntry = statusData.find(entry => entry.status || entry.ampStatus) || statusData[0];
+      
+      // Set the latest values - these should be the most recent
+      driveResult.latestStatus = latestStatusEntry.status || driveResult.latestStatus;
+      driveResult.latestStatusTime = latestStatusEntry.displayTime;
+      driveResult.ampStatus = latestStatusEntry.ampStatus || driveResult.ampStatus;
+      
+      // For ALL drive, also update running/stopped counts from the latest status entry
+      if (drive === 'ALL') {
+        driveResult.latestRunningCount = latestStatusEntry.runningCount ?? driveResult.latestRunningCount;
+        driveResult.latestStoppedCount = latestStatusEntry.stoppedCount ?? driveResult.latestStoppedCount;
+      }
+    }
+
+    // If you want chronological order (oldest -> newest), reverse arrays:
+    // driveResult.ampData.reverse();
+    // driveResult.voltData.reverse();
+    // driveResult.freqData.reverse();
+
+    return res.json({
+      success: true,
+      data: driveResult,
+      alerts: alertCount,
+      message: `Drive ${drive} data fetched successfully`
+    });
+  } catch (err) {
+    console.error("Single-drive endpoint error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      message: "Failed to fetch drive data"
+    });
+  }
+});
 
 influxRouter.get('/drive/data/:shift/:date', async (req, res) => {
   try {
@@ -1183,73 +1548,176 @@ res.json({
 function extractHPCData(dataObj, bucket) {
   const expectedLines = ["Front_Line", "RB", "RC"];
 
-  return Object.keys(dataObj)
-    .filter((key) => key.startsWith("HRP"))
-    .sort((a, b) => {
-      const getNumber = (k) => parseFloat(k.slice(3).replace("_", "."));
-      return getNumber(a) - getNumber(b);
-    })
-    .map((key) => {
-      const suffix = key.slice(3).replace("_", ".");
-      const arr = dataObj[key];
+  // We now use total_production_set time series (per line values)
+  const seriesRaw = Array.isArray(dataObj?.total_production_set)
+    ? dataObj.total_production_set
+    : [];
 
-      // For each line, find the last non-zero value
-      const latestValues = expectedLines.map((line) => {
-        let foundValue = 0;
-        for (let i = arr.length - 1; i >= 0; i--) {
-          if (arr[i]?.value?.[line] && arr[i].value[line] !== 0) {
-            foundValue = arr[i].value[line];
-            break;
-          }
-        }
-        return {
-          line,
-          value: foundValue / 2
-        };
-      });
+  if (!seriesRaw.length) return [];
 
-      const timeValue = parseFloat(suffix);
-      let timeLabel;
+  const toMin = (hhmm) => {
+    const [h, m] = String(hhmm).split(":").map(Number);
+    return h * 60 + (m || 0);
+  };
 
-      // Special handling for 14:00 and 14:30
-      if (bucket !== "TODAY") {
-        if (suffix === "14.00" || suffix === "14:00") {
-          timeLabel = "14:00-14:30";
-        } else if (suffix === "14.30" || suffix === "14:30") {
-          timeLabel = "14:30-15:00";
-        }
-      }
-
-      // Standard handling for all other times
-      if (!timeLabel) {
-        const hour = Math.floor(timeValue);
-        const nextHour = hour === 23 ? 24 : (hour + 1) % 24;
-        timeLabel = `${hour.toString().padStart(2, "0")}-${nextHour
-          .toString()
-          .padStart(2, "0")}`;
-      }
-
-      return {
-        time: timeLabel,
-        value: latestValues
-      };
-    })
-    .sort((a, b) => {
-      const aStart = parseInt(a.time.split("-")[0]);
-      const bStart = parseInt(b.time.split("-")[0]);
-
-      const aIsNight = aStart >= 23 || aStart < 6;
-      const bIsNight = bStart >= 23 || bStart < 6;
-
-      if (aIsNight && bIsNight) {
-        const aAdj = aStart < 6 ? aStart + 24 : aStart;
-        const bAdj = bStart < 6 ? bStart + 24 : bStart;
-        return aAdj - bAdj;
-      }
-      if (aIsNight) return -1;
-      if (bIsNight) return 1;
-      return aStart - bStart;
+  // Parse points: [{tMin, adjMin, vByLine}]
+  const points = seriesRaw
+    .filter((p) => p && typeof p.time === "string" && p.value && typeof p.value === "object")
+    .map((p) => {
+      const tMin = toMin(p.time);
+      return { tMin, time: p.time, vByLine: p.value };
     });
+
+  if (!points.length) return [];
+
+  // Detect midnight-crossing window (e.g., has 23xx and 00xx)
+  const hasLate = points.some((p) => p.tMin >= 23 * 60);
+  const hasEarly = points.some((p) => p.tMin < 6 * 60);
+  const crossesMidnight = hasLate && hasEarly;
+
+  const adj = (m) => (crossesMidnight && m < 6 * 60 ? m + 1440 : m);
+
+  const ptsAsc = points
+    .map((p) => ({ ...p, adjMin: adj(p.tMin) }))
+    .sort((a, b) => a.adjMin - b.adjMin);
+
+  // Build per-line series with carry-forward (handles missing line values)
+  const lineSeries = {};
+  expectedLines.forEach((ln) => (lineSeries[ln] = []));
+
+  const last = {};
+  expectedLines.forEach((ln) => (last[ln] = null));
+
+  for (const p of ptsAsc) {
+    expectedLines.forEach((ln) => {
+      const v = p.vByLine?.[ln];
+      if (v !== undefined && v !== null) last[ln] = Number(v);
+      lineSeries[ln].push({
+        adjMin: p.adjMin,
+        v: Number.isFinite(last[ln]) ? last[ln] : null,
+      });
+    });
+  }
+// After building lineSeries...
+const firstAdjByLine = {};
+expectedLines.forEach((ln) => {
+  const first = (lineSeries[ln] || []).find((p) => p.v != null);
+  firstAdjByLine[ln] = first ? first.adjMin : null;
+});
+
+  // binary search: last value at/before boundary
+  const valueAtOrBeforeAdj = (arrAsc, boundaryAdjMin) => {
+    if (!arrAsc.length) return null;
+    let lo = 0,
+      hi = arrAsc.length - 1,
+      ans = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (arrAsc[mid].adjMin <= boundaryAdjMin) {
+        ans = arrAsc[mid].v;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return ans;
+  };
+
+  // Build slot starts from available time range
+  const minAdj = ptsAsc[0].adjMin;
+  const maxAdj = ptsAsc[ptsAsc.length - 1].adjMin;
+
+  const floorToHour = (m) => Math.floor(m / 60) * 60;
+  const ceilToHour = (m) => Math.ceil(m / 60) * 60;
+
+  const startAdj = floorToHour(minAdj);
+  const endAdj = ceilToHour(maxAdj);
+
+  // Helper for labels
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const hhmmFromAdj = (a) => {
+    const m = ((a % 1440) + 1440) % 1440;
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${pad2(h)}:${pad2(mm)}`;
+  };
+
+  const makeStdLabel = (startAdjMin) => {
+    const startMin = ((startAdjMin % 1440) + 1440) % 1440;
+    const hour = Math.floor(startMin / 60);
+    const nextHour = hour === 23 ? 24 : (hour + 1) % 24;
+    return `${pad2(hour)}-${pad2(nextHour)}`;
+  };
+
+  const slots = [];
+
+  for (let cur = startAdj; cur < endAdj; cur += 60) {
+    const curMod = ((cur % 1440) + 1440) % 1440;
+
+    // Special split only when bucket !== TODAY
+    if (bucket !== "TODAY" && curMod === 14 * 60) {
+      // 14:00-14:30
+      slots.push({ startAdj: cur, endAdj: cur + 30, label: "14:00-14:30" });
+      // 14:30-15:00
+      slots.push({ startAdj: cur + 30, endAdj: cur + 60, label: "14:30-15:00" });
+      continue;
+    }
+
+    slots.push({ startAdj: cur, endAdj: cur + 60, label: makeStdLabel(cur) });
+  }
+
+  // Now compute delta(counter) for each slot per line and return same format
+  const out = slots.map((sl) => {
+    const latestValues = expectedLines.map((line) => {
+      const arr = lineSeries[line] || [];
+let startVal = valueAtOrBeforeAdj(arr, sl.startAdj);
+
+// end boundary: try exact first, then fallback to just-before (helps missing exact boundary)
+let endVal = valueAtOrBeforeAdj(arr, sl.endAdj);
+if (endVal == null) endVal = valueAtOrBeforeAdj(arr, sl.endAdj - 1);
+
+// if no end, we still can't compute
+if (endVal == null) return { line, value: 0 };
+
+// ONLY for the first slot that contains the first real point for this line:
+const firstAdj = firstAdjByLine[line];
+const isFirstSlotForThisLine =
+  firstAdj != null && sl.startAdj <= firstAdj && firstAdj < sl.endAdj;
+
+if (isFirstSlotForThisLine) {
+  startVal = 0; // baseline only once
+} else if (startVal == null) {
+  return { line, value: 0 }; // keep your strict behavior for all other slots
+}
+
+let produced = (Number(endVal) || 0) - (Number(startVal) || 0);
+
+// keep your old rule for later resets
+if (produced < 0) produced = 0;
+
+      return { line, value: produced };
+    });
+
+    return { time: sl.label, value: latestValues };
+  });
+
+  // Keep your exact night-first sorting behavior
+  return out.sort((a, b) => {
+    const aStart = parseInt(a.time.split("-")[0]);
+    const bStart = parseInt(b.time.split("-")[0]);
+
+    const aIsNight = aStart >= 23 || aStart < 6;
+    const bIsNight = bStart >= 23 || bStart < 6;
+
+    if (aIsNight && bIsNight) {
+      const aAdj = aStart < 6 ? aStart + 24 : aStart;
+      const bAdj = bStart < 6 ? bStart + 24 : bStart;
+      return aAdj - bAdj;
+    }
+    if (aIsNight) return -1;
+    if (bIsNight) return 1;
+    return aStart - bStart;
+  });
 }
 
 const plantFields=[
@@ -1538,7 +2006,7 @@ finalData.Performance[field] = Object.entries(groupData.Performance[field])
     .filter(([key]) => /^\d{2}:\d{2}$/.test(key))
     .map(([time, data]) => {
         // Skip processing for HRP fields - return raw data
-        if (field.startsWith('HRP')) {
+        if (field.startsWith('HRP') || field === "total_production_set") {
             return {
                 time,
                 value: data.lineValues // Return the raw lineValues object
@@ -2099,6 +2567,269 @@ function getHourlyProductionDelta(dataArray) {
 
 })
 
+influxRouter.get("/plantReportRange/:shift/:date", async (req, res) => {
+  try {
+    const { shift } = req.params;
+    const dateParam = req.params.date; // optional
+
+    // ---------- helpers ----------
+    const parseYMD = (s) => {
+      if (!s) return null;
+      const m = String(s).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) return null;
+      const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00.000Z`);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    // supports: "YYYY-MM-DD" OR "YYYY-MM-DD_YYYY-MM-DD" OR "YYYY-MM-DD to YYYY-MM-DD"
+    const parseDateOrRange = (raw) => {
+      const str = String(raw || "").trim();
+      const matches = str.match(/\d{4}-\d{2}-\d{2}/g) || [];
+      if (matches.length === 0) return { start: null, end: null };
+      if (matches.length === 1) {
+        const one = parseYMD(matches[0]);
+        return { start: one, end: one };
+      }
+      let a = parseYMD(matches[0]);
+      let b = parseYMD(matches[1]);
+      if (!a || !b) return { start: null, end: null };
+      if (a.getTime() > b.getTime()) [a, b] = [b, a];
+      return { start: a, end: b };
+    };
+
+    const toYMD = (d) => {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${dd}`;
+    };
+
+    const addDaysUTC = (d, n) => {
+      const x = new Date(d.getTime());
+      x.setUTCDate(x.getUTCDate() + n);
+      return x;
+    };
+
+    const enumerateDaysInclusiveUTC = (start, end) => {
+      const days = [];
+      let cur = new Date(start.getTime());
+      while (cur.getTime() <= end.getTime()) {
+        days.push(new Date(cur.getTime()));
+        cur = addDaysUTC(cur, 1);
+      }
+      return days;
+    };
+
+    // ---------- date / range ----------
+    let startDate, endDate;
+
+    if (!dateParam) {
+      // default today (UTC date)
+      const today = new Date();
+      const one = parseYMD(toYMD(today));
+      startDate = one;
+      endDate = one;
+    } else {
+      const parsed = parseDateOrRange(dateParam);
+      startDate = parsed.start;
+      endDate = parsed.end;
+    }
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid date. Use YYYY-MM-DD or range like YYYY-MM-DD_YYYY-MM-DD",
+      });
+    }
+
+    // If shift === "r" (Today), treat as only today (range doesn't make sense)
+    if (shift === "r") {
+      const today = new Date();
+      const one = parseYMD(toYMD(today));
+      startDate = one;
+      endDate = one;
+    }
+
+    const days = enumerateDaysInclusiveUTC(startDate, endDate);
+    const dayCount = days.length || 1;
+
+    // bucket logic same
+    let bucket = `SHIFT_${shift}`;
+    if (shift === "r") bucket = "TODAY";
+
+    const linesFilter = `r["LINE"] == "Front_Line" or r["LINE"] == "RB" or r["LINE"] == "RC"`;
+
+    // We will aggregate:
+    const avgFields = ["OEE", "Quality", "pph"]; // average across days (end-of-shift snapshots)
+    const sumFields = ["Total_Production", "rework", "reject", "FTPQ"]; // sum across days (end-of-shift snapshots)
+
+    // accumulator per line
+    const acc = {
+      Front_Line: {
+        LINE: "Front_Line",
+        _avgSum: { OEE: 0, Quality: 0, pph: 0 },
+        _avgCount: { OEE: 0, Quality: 0, pph: 0 },
+        Total_Production: 0,
+        rework: 0,
+        reject: 0,
+        FTPQ: 0,
+      },
+      RB: {
+        LINE: "RB",
+        _avgSum: { OEE: 0, Quality: 0, pph: 0 },
+        _avgCount: { OEE: 0, Quality: 0, pph: 0 },
+        Total_Production: 0,
+        rework: 0,
+        reject: 0,
+        FTPQ: 0,
+      },
+      RC: {
+        LINE: "RC",
+        _avgSum: { OEE: 0, Quality: 0, pph: 0 },
+        _avgCount: { OEE: 0, Quality: 0, pph: 0 },
+        Total_Production: 0,
+        rework: 0,
+        reject: 0,
+        FTPQ: 0,
+      },
+    };
+
+    // ---------- query day-by-day ----------
+    const perDayMeta = [];
+
+    for (const day of days) {
+      const { startTime, endTime } = getShiftTiming(shift, day);
+
+      if (!startTime || !endTime) {
+        return res.status(400).json({
+          success: false,
+          message: `Start time or end time is undefined for shift ${shift} on ${toYMD(day)}`,
+        });
+      }
+
+      perDayMeta.push({ ymd: toYMD(day), startTime, endTime });
+
+      // ✅ ONLY end-of-shift snapshot: group by LINE + _field, take last()
+      const fluxQuery = `
+from(bucket: "${bucket}")
+  |> range(start: time(v: "${startTime}"), stop: time(v: "${endTime}"))
+  |> filter(fn: (r) => r._measurement == "QUALITY" or r._measurement == "Performance")
+  |> filter(fn: (r) => ${linesFilter})
+  |> filter(fn: (r) =>
+    r._field == "Total_Production" or
+    r._field == "rework" or
+    r._field == "reject" or
+    r._field == "OEE" or
+    r._field == "Quality" or
+    r._field == "pph" or
+    r._field == "FTPQ"
+  )
+  |> group(columns: ["LINE", "_field"])
+  |> last()
+  |> keep(columns: ["LINE", "_field", "_value"])
+  |> pivot(rowKey: ["LINE"], columnKey: ["_field"], valueColumn: "_value")
+  |> keep(columns: ["LINE", "Total_Production", "rework", "reject", "OEE", "Quality", "pph", "FTPQ"])
+`;
+
+      const rows = [];
+
+      await new Promise((resolve, reject) => {
+        queryApi.queryRows(fluxQuery, {
+          next(r, tableMeta) {
+            try {
+              rows.push(tableMeta.toObject(r));
+            } catch (e) {
+              console.warn("Row parse error:", e);
+            }
+          },
+          error(err) {
+            console.error("Query execution error:", err);
+            reject(err);
+          },
+          complete() {
+            resolve();
+          },
+        });
+      });
+
+      // merge into accumulator
+      for (const r of rows) {
+        const lineKey = r?.LINE;
+        if (!lineKey || !acc[lineKey]) continue;
+
+        // AVG fields: sum + count (only if number)
+        for (const f of avgFields) {
+          const v = Number(r?.[f]);
+          if (Number.isFinite(v)) {
+            acc[lineKey]._avgSum[f] += v;
+            acc[lineKey]._avgCount[f] += 1;
+          }
+        }
+
+        // SUM fields
+        for (const f of sumFields) {
+          const v = Number(r?.[f]);
+          if (Number.isFinite(v)) {
+            acc[lineKey][f] += v;
+          }
+        }
+      }
+    }
+
+    // ---------- build final output (same structure) ----------
+    const finalRows = Object.keys(acc).map((k) => {
+      const line = acc[k];
+
+      const out = {
+        LINE: line.LINE,
+
+        // avg (end-of-shift snapshot averages)
+        OEE: line._avgCount.OEE ? line._avgSum.OEE / line._avgCount.OEE : 0,
+        Quality: line._avgCount.Quality
+          ? line._avgSum.Quality / line._avgCount.Quality
+          : 0,
+        pph: line._avgCount.pph ? line._avgSum.pph / line._avgCount.pph : 0,
+
+        // sums (end-of-shift snapshot totals)
+        Total_Production: line.Total_Production || 0,
+        rework: line.rework || 0,
+        reject: line.reject || 0,
+        FTPQ: line.FTPQ || 0,
+      };
+
+      return out;
+    });
+
+    // same output structure as your other route: { Front_Line: {...}, RB: {...}, RC: {...} }
+    const groupByLine = (arr) => {
+      const result = {};
+      for (const entry of arr) {
+        const line = entry.LINE;
+        if (!line) continue;
+        result[line] = { ...entry };
+      }
+      return result;
+    };
+
+    return res.json({
+      success: true,
+      meta: {
+        shift,
+        date: dateParam || "today",
+        days: perDayMeta, // optional debug: each shift-window used
+        bucket,
+      },
+      data: groupByLine(finalRows),
+    });
+  } catch (e) {
+    console.log(e);
+    return res.status(500).json({
+      success: false,
+      error: e?.message || String(e),
+    });
+  }
+});
 
 
 
@@ -2249,11 +2980,12 @@ function isnotRealtime(utcTimeStr) {
         console.log(`⏱️  Difference: ${floorTime} minutes`);
 
 	if(floorTime===5 || (floorTime>=20 && floorTime%20===0)){
-	 const emails=[  "naresh.yadav@bharatseats.net",
+	 const emails=[
+		 "naresh.yadav@bharatseats.net",
 		 "ommishra@opsight.ai",
 //		 "pulakrijhwani@opsight.ai",
 		          "nishant.kundu@bharatseats.net",
-                     "mohan.mishra@bharatseats.net",
+                    "mohan.mishra@bharatseats.net",
 	//	 "arunkumar@opsight.ai",
       "mukesh.yadav@bharatseats.net",
 		 ]
@@ -2327,14 +3059,14 @@ const isBefore5PM_IST = () => {
 
   return isLateNightOrEarlyMorning || isBlockedDate || isBlockedSunday;
 };
-function getDurations(data) {
+
+async function getDurations(data) {
   const nameMap = {
     Front_Line: "Front Line",
     RB: "Rear Back",
     RC: "Rear Cushion",
   };
 
-  // Sort data by time
   data.sort((a, b) => new Date(a._time) - new Date(b._time));
 
   const latestDowntime = {};
@@ -2344,14 +3076,7 @@ function getDurations(data) {
   for (const entry of data) {
     const line = entry.LINE;
     const time = new Date(entry._time);
-
-    if (!latestDowntime[line]) {
-      latestDowntime[line] = {
-        startTime: time,
-        endTime: -1,
-        duration: 0
-      };
-    }
+    if (Number.isNaN(time.getTime())) continue;
 
     if (!state[line]) {
       state[line] = {
@@ -2359,7 +3084,7 @@ function getDurations(data) {
         lastValue: entry.Total_Prod_Today,
         duration: 0,
         inDowntime: false,
-        downtimeStartTime: null
+        downtimeStartTime: null,
       };
       continue;
     }
@@ -2369,23 +3094,19 @@ function getDurations(data) {
 
     if (line in nameMap) {
       if (entry.Total_Prod_Today === s.lastValue) {
-        // Production unchanged - in downtime
         s.duration += minutes;
-        
+
         if (!s.inDowntime) {
-          // Starting a new downtime period
           s.inDowntime = true;
           s.downtimeStartTime = s.lastTime;
         }
       } else {
-        // Production changed - ending downtime if we were in one
         if (s.inDowntime) {
-          // Update latest downtime with the completed period only if duration > 5 minutes
-          if (s.duration > 5) {
+          if (s.duration >= 5) {
             latestDowntime[line] = {
               startTime: s.downtimeStartTime,
               endTime: time,
-              duration: s.duration
+              duration: Math.round(s.duration / 5) * 5,
             };
           }
           s.inDowntime = false;
@@ -2393,57 +3114,100 @@ function getDurations(data) {
         }
         s.duration = 0;
       }
-
       s.lastValue = entry.Total_Prod_Today;
 
       latestDuration[line] = {
         _time: entry._time,
         duration: Math.round(s.duration / 5) * 5,
       };
+
+      if (s.inDowntime && latestDuration[line].duration >= 5) {
+        latestDowntime[line] = {
+          startTime: s.downtimeStartTime,
+          endTime: time,
+          duration: latestDuration[line].duration,
+        };
+      }
     }
 
     s.lastTime = time;
   }
 
-  // Handle cases where downtime is still ongoing at the end of data
-  // We don't update latestDowntime for ongoing downtime - only for completed periods
+  const qualifyingLines = Object.entries(latestDuration).filter(
+    ([line, { duration }]) => duration >= 5
+  );
 
-  // Filter lines with duration >= 5 minutes
-  const qualifyingLines = Object.entries(latestDuration)
-    .filter(([line, { duration }]) => duration >= 5);
-
-  // Format outputs
   const durationsString = qualifyingLines
     .map(([line, { duration }]) => `${nameMap[line]}: ${duration} minutes`)
     .join(", ");
 
   const lineNames = qualifyingLines.map(([line]) => nameMap[line]);
 
-  // Find max duration among qualifying lines
   let maxDurationValue = 0;
   let maxDurationLine = null;
 
   for (const [line, { duration, _time }] of qualifyingLines) {
+    if (!Number.isFinite(duration)) continue;
     if (
       duration > maxDurationValue ||
       (duration === maxDurationValue &&
-        new Date(_time) > new Date(latestDuration[maxDurationLine]?._time || 0))
+        new Date(_time) >
+          new Date(latestDuration[maxDurationLine]?._time || 0))
     ) {
       maxDurationValue = duration;
       maxDurationLine = line;
     }
   }
-  
- // console.log(latestDowntime);
-  //createDowntime2(latestDowntime)
+
+  // ✅ Save/Update UnplannedDowntime rows in DB
+  const res = await saveLatestDowntime({ latestDowntime });
+  console.log("latestDowntime (synced):", res.results[0]?.data || {});
+
+  // ✅ Build a map: lineName -> { id, reason, ... }
+  // res shape: { ok:true, results:[ {lineKey, ok, action, data:{...plannedShutdown, lines:[...]}} ] }
+  const downtimeReasonByLineName = {};
+
+  const results = Array.isArray(res?.results) ? res.results : [];
+  for (const r of results) {
+    if (!r?.ok) continue;
+
+    const lineKey = r.lineKey; // RB/RC/Front_Line
+    const lineName = nameMap[lineKey] || lineKey;
+
+    const ps = r?.data; // plannedShutdown row
+    if (!ps?.id) continue;
+
+    downtimeReasonByLineName[lineName] = {
+      id: ps.id,
+      reason: ps.reason ?? "",
+      startTime: ps.startTime ?? null,
+      endTime: ps.endTime ?? null,
+      description: ps.description ?? "",
+    };
+  }
+  // ✅ optional: also map by lineKey if you prefer
+  const downtimeReasonByLineKey = {};
+  for (const [lineName, obj] of Object.entries(downtimeReasonByLineName)) {
+    const key = Object.keys(nameMap).find((k) => nameMap[k] === lineName);
+    if (key) downtimeReasonByLineKey[key] = obj;
+  }
+  console.log("downtimeReasonByLineName:", downtimeReasonByLineName);
 
   return {
     durationsString,
     lineNames,
+    latestDuration,
     maxDurationValue,
+    latestDowntime,
+
+    // ✅ NEW: use this to get reason for a particular line
+    // e.g. downtimeReasonByLineName["Rear Back"]?.reason
+    downtimeReasonByLineName,
+
+    // ✅ optional
+    downtimeReasonByLineKey,
   };
 }
-
 
 function getDurations2(data) {
   const nameMap = {
@@ -2734,7 +3498,8 @@ async function checkLast5MinutesData(data) {
       console.log("Power Up Detected");
 	     isEmailSent=false;
       console.log("changing the isEmailsent to ",isEmailSent)
-	     const emails=[  "naresh.yadav@bharatseats.net",
+	     const emails=[
+		     "naresh.yadav@bharatseats.net",
                  "ommishra@opsight.ai",
 //		          "pulakrijhwani@opsight.ai",
                 // "arunkumar@opsight.ai",
@@ -2758,20 +3523,22 @@ const mailConfig = {
     5: {
       level: "Level 1",
       emails: [
-         "mukesh.yadav@bharatseats.net",
+	      "ommishra@opsight.ai",
+        "mukesh.yadav@bharatseats.net",
       ],
     },
     10: {
       level: "Level 2",
       emails: [
-        "aniket.singh@bharatseats.net",
+	      "ommishra@opsight.ai",
+       // "aniket.singh@bharatseats.net",
         "mukesh.yadav@bharatseats.net",
 	      "Yogesh.Bansal@bharatseats.net",
       ],
     },
 	20:{
 		level:"suman",
-		emails:["Suman.Yadav@bharatseats.net"]
+		emails:["Suman.Yadav@bharatseats.net","mukesh.yadav@bharatseats.net"]
 	},
     35: {
       level: "Level 3",
@@ -2780,11 +3547,55 @@ const mailConfig = {
          "naresh.yadav@bharatseats.net",
          "aniket.singh@bharatseats.net",
          "mukesh.yadav@bharatseats.net",
-	      "Rajiv.Arora@bharatseats.net",
+	     "arunkumar@opsight.ai",
+	     "Rajiv.Arora@bharatseats.net",
       ],
     },
   };
 
+
+
+
+
+function buildDowntimeMessage(durations) {
+  let isCeoSend = true;
+
+  const map = durations?.downtimeReasonByLineName || {};
+  const latest = durations?.latestDuration || {}; // { RB:{duration}, ... }
+
+  const nameToKey = {
+    "Front Line": "Front_Line",
+    "Rear Back": "RB",
+    "Rear Cushion": "RC",
+  };
+
+  const lines = [];
+  const badReasons = new Set(["", "No reason alloted"]);
+
+  for (const [lineName, obj] of Object.entries(map)) {
+    const key = nameToKey[lineName];
+    const dur = latest?.[key]?.duration ?? 0; // already 5-rounded
+
+    if (dur < 5) continue;
+
+    const reasonRaw = (obj?.reason ?? "").trim();
+    
+
+    // ✅ if any line (that qualifies) has empty or "No reason alloted" => block CEO send
+    if (badReasons.has(reasonRaw)) {
+      isCeoSend = false;
+    }
+
+    lines.push(`${lineName}: ${dur} min | Reason: ${reasonRaw || "NA"}`);
+  }
+
+  if (lines.length === 0) return { message: "", isCeoSend: false };
+
+  return {
+    message: `Downtime Alert:\n${lines.join("\n")}`,
+    isCeoSend,
+  };
+}
 
 const checkRunModeAndSendAlerts = async () => {
 if(isBefore5PM_IST()){
@@ -2803,7 +3614,7 @@ const QueryForLive = `
     |> filter(fn: (r) => r["_measurement"] == "Performance")
   |> filter(fn: (r) => r["LINE"] == "RB" or r["LINE"] == "RC" or r["LINE"] == "Front_Line")
   |> filter(fn: (r) => r["_field"] == "communication_status_direct")
-    |> aggregateWindow(every: 1m, fn: last, createEmpty: false)
+    |> aggregateWindow(every: 20s, fn: last, createEmpty: false)
     |> sort(columns: ["_time"], desc: false)
 `;
 
@@ -2813,7 +3624,7 @@ const QueryForLive2 = `
      |> filter(fn: (r) => r["_measurement"] == "Performance")
   |> filter(fn: (r) => r["LINE"] == "RB" or r["LINE"] == "RC" or r["LINE"] == "Front_Line")
   |> filter(fn: (r) => r["_field"] == "communication_status_via_replication")
-    |> aggregateWindow(every: 1m, fn: last, createEmpty: false)
+    |> aggregateWindow(every: 20s, fn: last, createEmpty: false)
     |> sort(columns: ["_time"], desc: false)
 `;
 	console.log("start and end time of communication query",startTime,endTime)
@@ -2882,26 +3693,32 @@ const linesList=TagsSyncStatus(getLatestStatus(rows),getLatestStatus(rowsDirect)
 
   try { 
 	  const rows2 = await queryApi.collectRows(fluxQuery);
+	  	  const durations = await getDurations(rows2);
+const info = durations.durationsString;
+const maxDuration = durations.maxDurationValue;
+const floorTime = Math.floor(maxDuration / 5) * 5;
 
-	  const durations=getDurations(rows2);
-    let durationMinutes = 0;
-	const info=durations.durationsString
-	  const maxDuration=durations.maxDurationValue;
-   // const duration=Math.floor(durationMinutes/10)*10
-	  const duration=0;
+const message = buildDowntimeMessage(durations);
+
+console.log("floorTime:", floorTime);
+console.log("message:\n", message.message);
+
          const lineName=formatLineNames(durations.lineNames);	
-	    const floorTime=Math.floor(maxDuration/5)*5;
 
 
-          console.log(lineName,info,"So email will be sent for this floortime ",floorTime,info,durations);
+          console.log(lineName,info,"So email will be sent for this floortime ",floorTime,message);
 
 
 	 
 async function sendMailsSequentially(emails, info, lineName) {
   for (const email of emails) {
     try {
-	    console.log("sending in process ")
-      await SendMailToUserAlert(email, info, lineName);
+	    console.log("sending in process ,for ",email)
+	          if((email==="Rajiv.Arora@bharatseats.net" || email==="ommishra@opsight.ai" || email==="arunkumar@opsight.ai" || email==="aniket.singh@bharatseats.net") && !message.isCeoSend){
+        console.log("Skipping CEO email as reason not allotted")
+        continue;
+      }
+      await SendMailToUserAlert(email, message?.message, lineName);
       console.log(`✅ Sent to ${email}`);
       await sleep(2000); // wait 2 seconds before sending next
     } catch (err) {
@@ -2949,7 +3766,7 @@ influxRouter.post("/check-runmode", async (req, res) => {
       level: "Level 1",
       emails: [
          "mukesh.yadav@bharatseats.net",
-       //  "ommishra@opsight.ai",
+         "ommishra@opsight.ai",
          "mohan.mishra@bharatseats.net",
         "Gaurav.kumar@bharatseats.net",
       ],
@@ -2959,7 +3776,7 @@ influxRouter.post("/check-runmode", async (req, res) => {
       emails: [
          "Suman.Yadav@bharatseats.net",
          "ommishra@opsight.ai",
-        // "arunkumar@opsight.ai"
+       //  "arunkumar@opsight.ai"
         ,"mohan.mishra@bharatseats.net",
 
       ],
@@ -3081,10 +3898,11 @@ async function sendEmails(config, message) {
 }
 
 
+influxRouter.get("/performance-report",getDowntimeReportByLineDateShiftCumulative)
 
 
 
-  module.exports = {influxRouter ,sendBitEmails};
+  module.exports = {influxRouter,getShiftTiming ,sendBitEmails};
 
 
 
