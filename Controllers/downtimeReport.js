@@ -1,6 +1,6 @@
 const { influxDB } = require("../db/influxDB/influx");
+const { getShiftTiming } = require("../functions/shiftTimings");
 const prismaClient  = require("../lib/prismaClient");
-const { getShiftTiming } = require("../Routes/influxRoutes");
 const IST_TZ = "Asia/Kolkata";
 
 

@@ -1,8 +1,8 @@
 // controllers/productionLossReasons.controller.js
 // Assumes you have: const prisma = require("../prismaClient") (or prismaClient)
 
+const { getShiftTiming } = require("../functions/shiftTimings");
 const prismaClient = require("../lib/prismaClient");
-const { getShiftTiming } = require("../Routes/influxRoutes");
 // ✅ Create
 const normalizeShift = (shift) => (shift == null ? "" : String(shift).trim());
 

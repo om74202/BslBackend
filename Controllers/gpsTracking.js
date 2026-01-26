@@ -1,10 +1,23 @@
 // controllers/truckController.js
 const { influxDB } = require("../db/influxDB/influx");
 const prismaClient = require("../lib/prismaClient");
+const { Point } = require("@influxdata/influxdb-client");
+const { DeleteAPI } = require("@influxdata/influxdb-client-apis");
+const orgId="7386a755-3aca-433c-a6a0-b178f7c80152"
 
 const queryApi = influxDB.getQueryApi("BSL Kharkhoda");
 
 /* -------------------- helpers -------------------- */
+
+const IST_OFFSET_MIN = 330;
+
+function getIstNow() {
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utcMs + IST_OFFSET_MIN * 60000);
+}
+
+
 function stripSensitiveTruckData(truck) {
   // never leak deviceAccessToken to frontend
   const cleanData = truck?.data ? { ...truck.data } : {};
@@ -43,6 +56,26 @@ function parseDateRange(fromQ, toQ) {
   end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
+function shiftStartTodayISTToUtcISO(shiftStartHM) {
+  const m = String(shiftStartHM || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return { error: "Invalid shiftStart (expected HH:MM)" };
+
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return { error: "Invalid shiftStart (HH 0-23, MM 0-59)" };
+  }
+
+  const istNow = getIstNow();
+  const y = istNow.getUTCFullYear();
+  const mo = istNow.getUTCMonth();
+  const d = istNow.getUTCDate();
+
+  // IST local time -> UTC ISO
+  const utcMs = Date.UTC(y, mo, d, hh, mm, 0) - IST_OFFSET_MIN * 60000;
+  return { startISO: new Date(utcMs).toISOString() };
+}
+
 
 /* -------------------- existing controllers -------------------- */
 const createTruck = async (req, res) => {
@@ -536,18 +569,268 @@ const getTripsForTruckByDate = async (req, res) => {
   }
 };
 
+const getPsnCardsNotDepartedAfterPsn = async (req, res) => {
+  const {shift}=req.query
+  const shiftIndex=shift.charCodeAt(0)-'A'.charCodeAt(0)
+  try {
+    const shifts=await prismaClient.shiftTimings.findMany({
+      where:{
+        organizationId:orgId
+      }
+    })
+    const shiftStart=shifts[shiftIndex]?.start
+    
+    const endISO = new Date().toISOString(); // now
+    const { startISO, error } = shiftStartTodayISTToUtcISO(shiftStart);
+    console.log(startISO,endISO)
 
+    // ---------------------------
+    // 1) Influx: PSNs for today
+    // ---------------------------
+const flux = `
+from(bucket: "${fluxEscape("TODAY")}")
+  |> range(start: time(v: "${fluxEscape(startISO)}"), stop: time(v: "${fluxEscape(endISO)}"))
+  |> filter(fn: (r) => r["_measurement"] == "GPS")
+  |> filter(fn: (r) => r["_field"] == "psn")
+  |> keep(columns: ["_time", "_value", "RFID"])
+  |> group(columns: ["RFID"])
+  |> sort(columns: ["_time"], desc: false)
+  |> unique(column: "_value")
+`.trim();
+
+
+    const rows = await influxQueryRows(flux);
+
+    // RFID -> { psnsInit: [{time, psn}], lastPsnTime, lastPsn }
+    const psnByRfid = new Map();
+    console.log(rows.length)
+    for (const r of rows) {
+      // console.log(r)
+      const rfid = (r.RFID ?? "").toString();
+      if (!rfid) continue;
+
+      const time = r._time;
+      const psn = r._value;
+
+      if (!psnByRfid.has(rfid)) psnByRfid.set(rfid, { psnsInit: [] });
+      psnByRfid.get(rfid).psnsInit.push({ time, psn });
+    }
+
+    // compute lastPsnTime/lastPsn per rfid
+    for (const [rfid, obj] of psnByRfid.entries()) {
+      const last = obj.psnsInit[obj.psnsInit.length - 1]; // latest due to asc sort
+      obj.lastPsnTime = last?.time ?? null;
+      obj.lastPsn = last?.psn ?? null;
+    }
+
+    const rfidsWithPsn = Array.from(psnByRfid.keys());
+
+    // ---------------------------
+    // 2) Load all trucks
+    // ---------------------------
+    const allTrucks = await prismaClient.truck.findMany({
+      select: { id: true, name: true, alias: true, status: true, data: true },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    const truckIds = allTrucks.map((t) => t.id);
+
+    // ---------------------------
+    // 3) Latest trip per truck
+    // ---------------------------
+    const latestTrips = truckIds.length
+      ? await prismaClient.trip.findMany({
+          where: { truckId: { in: truckIds } },
+          orderBy: { createdAt: "desc" },
+          distinct: ["truckId"],
+          select: {
+            truckId: true,
+            departBsl: true,
+            reachedMsil: true,
+            reachedBsl: true,
+            createdAt: true,
+          },
+        })
+      : [];
+
+    const latestTripByTruckId = new Map(latestTrips.map((tr) => [tr.truckId, tr]));
+
+    // ---------------------------
+    // 4) Apply ONLY your requested logic and build cards
+    // ---------------------------
+    const cards = [];
+
+    for (const t of allTrucks) {
+      const latestTrip = latestTripByTruckId.get(t.id);
+      if (!latestTrip) continue; // if no trips, skip (as per rules)
+
+      const safe = stripSensitiveTruckData(t);
+
+      const hasPsnToday = psnByRfid.has(safe.name);
+
+      if (hasPsnToday) {
+        // Rule #1: PSN exists => latestTrip.reachedMsil should be null
+        // if (latestTrip.reachedBsl != null) continue;
+
+        const psnInfo = psnByRfid.get(safe.name);
+
+        const card = {
+          id: safe.id,
+          name: safe.name,
+          alias: safe.alias ?? null,
+          status: safe.status ?? null,
+          numberPlate: safe.data?.numberPlate ?? null,
+          zone: safe.data?.zone ?? null,
+          lastPollAt: safe.data?.lastPollAt ?? null,
+        };
+
+        cards.push({
+          card,
+          psnsInit: psnInfo?.psnsInit ?? [],
+          lastPsn: psnInfo?.lastPsn ?? null,
+          lastPsnTime: psnInfo?.lastPsnTime ?? null,
+        });
+      } else {
+        // Rule #2: PSN doesn't exist => latestTrip.departBsl should NOT be null
+        if (latestTrip.departBsl == null) continue;
+
+        const card = {
+          id: safe.id,
+          name: safe.name,
+          alias: safe.alias ?? null,
+          status: safe.status ?? null,
+          numberPlate: safe.data?.numberPlate ?? null,
+          zone: safe.data?.zone ?? null,
+          lastPollAt: safe.data?.lastPollAt ?? null,
+        };
+
+        cards.push({
+          card,
+          psnsInit: [],
+          lastPsn: null,
+          lastPsnTime: null,
+        });
+      }
+    }
+
+    return res.json({
+      range: { start: startISO, end: endISO, tz: "IST" },
+      count: cards.length,
+      cards,
+      meta: {
+        rfidsWithPsn: rfidsWithPsn.length,
+        trucksTotal: allTrucks.length,
+      },
+    });
+  } catch (err) {
+    console.error("getPsnCardsNotDepartedAfterPsn error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+
+const movePsnBetweenRfids = async (req, res) => {
+  try {
+    const { psn, psnTime, fromRfidId, toRfidId } = req.body ?? {};
+
+    if (!psn || !psnTime || !fromRfidId || !toRfidId) {
+      return res.status(400).json({
+        message: "psn, psnTime, fromRfidId, toRfidId are required",
+      });
+    }
+    if (String(fromRfidId) === String(toRfidId)) {
+      return res.status(400).json({ message: "fromRfidId and toRfidId must be different" });
+    }
+
+    // choose bucket (default TODAY)
+    const bucket = (req.query.bucket ?? "TODAY").toString();
+    const org = "BSL Kharkhoda";
+
+    // Create APIs
+    const writeApi = influxDB.getWriteApi(org, bucket, "ns");
+    const deleteApi = new DeleteAPI(influxDB);
+
+    // 1) WRITE the psn point to toRfidId at the same timestamp
+    // Use line protocol with RFC3339 time -> influx client will handle it if you use Point+Date,
+    // but Date will lose ns. So we write a record line with explicit timestamp (ns) best-effort:
+    //
+    // We'll use Date for precision up to ms; if your psnTime has ns, Influx will still store ms-level here.
+    // If you need true ns preservation, tell me your exact _time format and I’ll convert to ns integer.
+    const tsDate = new Date(psnTime);
+    if (Number.isNaN(tsDate.getTime())) {
+      return res.status(400).json({ message: "Invalid psnTime" });
+    }
+
+    // Write using Point (ms precision)
+    const n = Number(psn);
+if (!Number.isFinite(n)) {
+  return res.status(400).json({ message: "psn must be a number for this measurement" });
+}
+    const p = new Point("GPS")
+  .tag("RFID", String(toRfidId))
+  .intField("psn", Math.trunc(n))
+  .timestamp(new Date(psnTime));    
+
+    p.timestamp(tsDate);
+    writeApi.writePoint(p);
+    await writeApi.flush();
+
+    // 2) DELETE the point(s) from fromRfidId at that timestamp window
+    // Influx delete API works on a time range + predicate.
+    // We'll delete only a tiny window around psnTime to avoid deleting too much.
+    const start = new Date(tsDate.getTime() - 1).toISOString(); // -1ms
+    const stop = new Date(tsDate.getTime() + 1).toISOString();  // +1ms (exclusive-ish)
+
+    const predicate = `_measurement="GPS" AND RFID="${String(fromRfidId).replace(/"/g, '\\"')}"`;
+
+    try {
+      await deleteApi.postDelete({
+        org,
+        bucket,
+        body: { start, stop, predicate },
+      });
+    } catch (delErr) {
+      // rollback attempt: remove what we just wrote to toRfidId in the same window
+      try {
+        const rollbackPredicate = `_measurement="GPS" AND RFID="${String(toRfidId).replace(/"/g, '\\"')}"`;
+        await deleteApi.postDelete({
+          org,
+          bucket,
+          body: { start, stop, predicate: rollbackPredicate },
+        });
+      } catch (rbErr) {
+        // ignore rollback failure; return original delete error
+      }
+      throw delErr;
+    }
+
+    return res.json({
+      ok: true,
+      moved: {
+        psn: String(psn),
+        psnTime: tsDate.toISOString(),
+        fromRfidId: String(fromRfidId),
+        toRfidId: String(toRfidId),
+        bucket,
+      },
+    });
+  } catch (err) {
+    console.error("movePsnBetweenRfids error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
 
 module.exports = {
   createTruck,
   updateTruck,
   getAllTrucks,
   getTruckById,
-
+  getPsnCardsNotDepartedAfterPsn,
   // existing
   getLiveTrucks,
 
   // NEW for ArrivalDetails
+  movePsnBetweenRfids,  
   getTrucksSummaryByDate,
   getTripsForTruckByDate,
 };

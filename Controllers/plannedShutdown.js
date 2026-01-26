@@ -9,7 +9,7 @@
 
 const prismaClient = require("../lib/prismaClient");
 const { getMqttClient, publishMessage } = require("../functions/mqtt");
-const { getShiftTiming } = require("../Routes/influxRoutes");
+const { getShiftTiming } = require("../functions/shiftTimings");
 
 // controllers/plannedShutdown.controller.js
 // Assumes:
@@ -824,10 +824,7 @@ const getPlannedVsUnplannedMinutes = async (req, res) => {
         message: "Invalid date format. Expected YYYY-MM-DD",
       });
     }
-    const shiftTimingFn =
-      typeof getShiftTiming === "function"
-        ? getShiftTiming
-        : require("../Routes/influxRoutes").getShiftTiming;
+    const shiftTimingFn =getShiftTiming
 
     if (typeof shiftTimingFn !== "function") {
       return res.status(500).json({

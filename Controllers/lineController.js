@@ -2,11 +2,144 @@
 // make sure you have prisma imported/initialized somewhere
 // const { PrismaClient } = require("@prisma/client");
 // const prisma = new PrismaClient();
-const { getShiftTiming } = require("../Routes/influxRoutes");
 
 const prismaClient = require("../lib/prismaClient");
 
 const { publishJphSet } = require("../functions/mqtt");
+const { getShiftTiming } = require("../functions/shiftTimings");
+
+
+
+const createLine=async(req , res)=>{
+const {lineName , lineType  , organizationId , noOfShifts=0 , noOfCustomShifts=0 , noOfStations=0 , customShiftsTimings=[] ,stations=[] }=req.body
+let shiftIds=[];
+console.log(req.body)
+try{
+  const orgData=await prismaClient.organization.findUnique({
+  where:{
+    id:organizationId
+  },include:{
+    shifts:true
+  }
+})
+if(!orgData){
+  return res.status(400).json({message:"Organization ID  is invalid "})
+}
+
+const totalShiftIds=orgData.shifts.map((shift)=>shift.id)
+
+if(noOfShifts>totalShiftIds.length){
+  return res.status(400).json({message:"No. of Shifts is invalid "})
+}
+
+
+for(let i=0;i<noOfShifts;i++){
+  shiftIds[i]=totalShiftIds[i];
+}
+
+
+console.log(shiftIds);
+}catch(e){
+  console.log(e)  
+return res.status(404).json({message:"No shiftIds" , error :e})
+}
+
+  if (!lineName) return res.status(400).send({ message: "Line Name is required" });
+if (!organizationId) return res.status(400).send({ message: "organization ID is required" });
+if (!noOfShifts) return res.status(400).send({ message: "No. of shifts are   required" });
+if (!noOfStations) return res.status(400).send({ message: "Station Count is required" });
+if (!lineType) return res.status(400).send({ message: "line Type  is required" });
+
+
+
+try{
+    console.time("createLine")
+const line=await prismaClient.line.create({
+    data:{
+        lineName:lineName,
+        organizationId:organizationId,
+        lineType:lineType,
+        noOfStations:noOfStations,
+        noOfShifts:noOfShifts,
+        noOfCustomShifts:noOfCustomShifts,
+      
+        stations:{
+          create:stations.map((station)=>({
+            name:station.name,
+            Pokayoke:station.Pokayoke || false
+          }))
+        },  
+        shiftTimings:{
+          connect:shiftIds.map((id)=>({id}))
+        }, 
+        customShiftsTimings: {
+          create: customShiftsTimings.map((shift) => ({
+            start: shift.start,
+            end: shift.end,
+            plannedBreaksCustom: {
+      create: Array.isArray(shift.plannedBreaksCustom)
+        ? shift.plannedBreaksCustom.map((breakObj) => ({
+            start: breakObj.start,
+            end: breakObj.end,
+            typeOfBreak: breakObj.typeOfBreak
+          }))
+        : [] // fallback to empty array if not passed or not an array
+    }
+          }))
+        }
+    }
+})
+
+console.timeEnd("createLine");
+res.json({message:"Line Created Successfully",line})
+}catch(e){
+  console.log(e);
+    res.status(500).json({message:"Internal Server Error "})
+}
+}
+
+
+const getLines=async(req , res)=>{
+    try{
+        const Lines=await prismaClient.line.findMany({
+          include:{
+            shiftTimings:true,
+            customShiftsTimings:true,
+            stations:true,
+            devices:true
+          }
+        });
+        res.status(200).json({Lines:Lines , status:"success"})
+      }catch(e){
+        res.status(404).json({message:"Line not found"})
+      }
+}
+
+
+const getLinesByOrgId=async (req, res)=>{
+    try{
+        const {orgId} = req.params
+        const Lines=await prismaClient.line.findMany({
+          where:{
+            organizationId:req.params.orgId,
+		  lineType:"mainLine"
+          },
+          include:{
+            shiftTimings:true,
+            customShiftsTimings:true,
+            stations:true,
+            devices:true
+          }
+        });
+
+	            const idealParams=await prismaClient.idealParameters.findMany();
+
+        res.status(200).json({Lines:Lines,idealParams:idealParams , status:"success"})
+      }catch(e){
+        res.status(404).json({message:"Line not found"})
+      }
+}
+
 
 const updateTargetJPH = async (req, res) => {
   try {
@@ -327,11 +460,56 @@ const getJphHistoryForShift = async (req, res) => {
 };
 
 
+const getStationByOrgId = async (req, res) => {
+  try{
+      const {orgId} = req.params
+      
+      const Lines=await prismaClient.station.findMany({
+        where:{
+          line:{
+            organizationId:orgId
+          }
+        },
+        include:{
+          line:true,
+          torqueGuns:true,
+        }
+      });
+      res.status(200).json({stations:Lines , status:"success"})
+    }catch(e){
+      res.status(404).json({message:"Line not found"})
+    }
+}
+
+const setLinesStatus=async (req, res)=>{
+  try{
+    const {status}=req.body;
+	  console.log(status)
+    if( status!=="Active" &&  status!=="Inactive"){
+      return res.status(500).json({message:"Invalid Status , it must be Active or Inactive"})
+    }
+      const {lineId} = req.params
+      const Orgs=await prismaClient.line.update({
+        where:{
+          lineId:lineId
+        },
+        data:{
+          status:status
+        }
+      });
+      res.status(200).json({message:`Status updated to ${status}`, status:"success"})
+    }catch(e){
+      res.status(404).json({message:"Line not found", error:e})
+    }
+}
 
 module.exports = {
   updateTargetJPH,
   getTargetJPHUpdateHistory,
-	  getJphHistoryForShift,
-
+  getJphHistoryForShift,
+  getStationByOrgId,
+  setLinesStatus,
+  createLine
+  ,getLines,getLinesByOrgId
 };
 
