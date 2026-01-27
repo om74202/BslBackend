@@ -1,6 +1,28 @@
-# .gitignore
-**/.env               # Ignores .env in ALL directories
-.env.influx
-db/prisma/.env
+# dependencies
 node_modules/
+
+# environment variables (ALL env files)
 .env
+.env.*
+**/.env
+**/.env.*
+
+
+
+# database / prisma
+db/.env
+db/*.env
+
+# logs
+npm_log.txt
+*.log
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+
+# build / cache
+dist/
+build/
