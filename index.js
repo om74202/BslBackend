@@ -36,7 +36,7 @@ app.use(cookieParser())
 app.set('trust proxy', 1);
 app.use(
   cors({
-	  origin: ["https://20.198.22.6","http://192.168.1.13:5173","http://20.198.22.6", "http://localhost:5173"], // URL of your React frontend
+	  origin: ["https://20.198.22.6","http://192.168.1.13:5173","http://20.198.22.6", "http://localhost:5173","http://localhost:3000"], // URL of your React frontend
     credentials: true,
     allowedHeaders: ['Authorization', 'Content-Type']
   }))
