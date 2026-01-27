@@ -4,10 +4,11 @@ const prismaClient = require("../lib/prismaClient");
 const { Point } = require("@influxdata/influxdb-client");
 const { DeleteAPI } = require("@influxdata/influxdb-client-apis");
 const orgId="7386a755-3aca-433c-a6a0-b178f7c80152"
-
 const queryApi = influxDB.getQueryApi("BSL Kharkhoda");
 
 /* -------------------- helpers -------------------- */
+
+
 
 const IST_OFFSET_MIN = 330;
 
@@ -17,6 +18,25 @@ function getIstNow() {
   return new Date(utcMs + IST_OFFSET_MIN * 60000);
 }
 
+function shiftStartTodayISTToUtcISO(shiftStartHM) {
+  const m = String(shiftStartHM || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return { error: "Invalid shiftStart (expected HH:MM)" };
+
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return { error: "Invalid shiftStart (HH 0-23, MM 0-59)" };
+  }
+
+  const istNow = getIstNow();
+  const y = istNow.getUTCFullYear();
+  const mo = istNow.getUTCMonth();
+  const d = istNow.getUTCDate();
+
+  // IST local time -> UTC ISO
+  const utcMs = Date.UTC(y, mo, d, hh, mm, 0) - IST_OFFSET_MIN * 60000;
+  return { startISO: new Date(utcMs).toISOString() };
+}
 
 function stripSensitiveTruckData(truck) {
   // never leak deviceAccessToken to frontend
@@ -56,26 +76,6 @@ function parseDateRange(fromQ, toQ) {
   end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
-function shiftStartTodayISTToUtcISO(shiftStartHM) {
-  const m = String(shiftStartHM || "").match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return { error: "Invalid shiftStart (expected HH:MM)" };
-
-  const hh = Number(m[1]);
-  const mm = Number(m[2]);
-  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-    return { error: "Invalid shiftStart (HH 0-23, MM 0-59)" };
-  }
-
-  const istNow = getIstNow();
-  const y = istNow.getUTCFullYear();
-  const mo = istNow.getUTCMonth();
-  const d = istNow.getUTCDate();
-
-  // IST local time -> UTC ISO
-  const utcMs = Date.UTC(y, mo, d, hh, mm, 0) - IST_OFFSET_MIN * 60000;
-  return { startISO: new Date(utcMs).toISOString() };
-}
-
 
 /* -------------------- existing controllers -------------------- */
 const createTruck = async (req, res) => {
@@ -249,31 +249,101 @@ const getLiveTrucks = async (req, res) => {
  * API #1: GET /api/gpsTracking/trucks/summary?from=YYYY-MM-DD&to=YYYY-MM-DD&truckId=ALL
  * Returns trucks + tripsCount in date range (no trip list).
  */
+
+/**
+ * API #1: GET /api/gpsTracking/trucks/summary?from=YYYY-MM-DD&to=YYYY-MM-DD&truckId=ALL&psn=123
+ * Returns trucks + tripsCount in date range (no trip list).
+ * If psn is provided: returns only truck(s) whose RFID (truck.name) has that PSN in Influx TODAY (IST day -> now).
+ */
 const getTrucksSummaryByDate = async (req, res) => {
   try {
     const truckIdQ = (req.query.truckId ?? "ALL").toString();
     const fromQ = (req.query.from ?? "").toString().trim();
     const toQ = (req.query.to ?? "").toString().trim();
+    const psnQRaw = (req.query.psn ?? "").toString().trim();
 
     const { start, end, error } = parseDateRange(fromQ, toQ);
     if (error) return res.status(400).json({ message: error });
+
+    // If psn is provided, query Influx TODAY (IST day start -> now) and restrict trucks by RFID
+// If psn is provided, query Influx in the SAME date range (IST day boundaries)
+let rfidsForPsn = null;
+if (psnQRaw) {
+  const psnPrefix = psnQRaw.trim();
+  if (!/^\d+$/.test(psnPrefix)) {
+    return res.status(400).json({ message: "psn must be digits only for prefix filter" });
+  }
+
+
+  // Build Influx range from query date range (IST day start to IST next-day start)
+  // fromISO = IST 00:00 of from-date expressed as UTC ISO
+  // toISO   = IST 00:00 of (to-date + 1 day) expressed as UTC ISO (exclusive)
+  const fromISO = fromQ ? startOfDateISTISO(fromQ) : startOfDateISTISO(new Date().toISOString());
+
+  let toISO;
+  if (toQ) {
+    const toStart = new Date(startOfDateISTISO(toQ)); // IST 00:00 of to-date (UTC ISO)
+    toISO = new Date(toStart.getTime() + 24 * 60 * 60 * 1000).toISOString(); // next day IST 00:00
+  } else {
+    // if no "to", search until now
+    toISO = new Date().toISOString();
+  }
+
+  if (new Date(fromISO).getTime() >= new Date(toISO).getTime()) {
+    return res.status(400).json({ message: "Invalid date range (from must be before to)" });
+  }
+
+  const flux = `
+import "strings"
+from(bucket: "${fluxEscape("TODAY")}")
+  |> range(start: time(v: "${fluxEscape(fromISO)}"), stop: time(v: "${fluxEscape(toISO)}"))
+  |> filter(fn: (r) => r["_measurement"] == "GPS")
+  |> filter(fn: (r) => r["_field"] == "psn")
+  |> filter(fn: (r) => strings.hasPrefix(v: string(v: r._value), prefix: "${fluxEscape(psnPrefix)}"))
+  |> keep(columns: ["RFID"])
+  |> group()
+  |> distinct(column: "RFID")
+`.trim();
+
+  const rows = await influxQueryRows(flux);
+  rfidsForPsn = rows.map((r) => (r._value ?? "").toString()).filter(Boolean);
+console.log(rows[0])
+  // No matches => return empty
+  if (rfidsForPsn.length === 0) {
+    return res.json({
+      trucks: [],
+      range: { from: start.toISOString(), to: end.toISOString() },
+      meta: { psnPrefix, rfidsMatched: 0, influxRange: { fromISO, toISO } },
+    });
+  }
+}
+console.log(rfidsForPsn)
+
+    // Build Prisma where clause
+    const where = {};
+    if (truckIdQ !== "ALL") where.id = truckIdQ;
+    if (Array.isArray(rfidsForPsn)) where.name = { in: rfidsForPsn };
 
     // 1) load trucks (light)
     const trucks = await prismaClient.truck.findMany({
       select: { id: true, name: true, alias: true, data: true },
       orderBy: { createdAt: "desc" },
-      where: truckIdQ !== "ALL" ? { id: truckIdQ } : undefined,
+      where: Object.keys(where).length ? where : undefined,
     });
 
     const truckIds = trucks.map((t) => t.id);
-    const grouped = await prismaClient.trip.groupBy({
-      by: ["truckId"],
-      where: {
-        truckId: { in: truckIds },
-        createdAt: { gte: start, lt: end },
-      },
-      _count: { _all: true },
-    });
+
+    // 2) trips count in requested date range (from/to)
+    const grouped = truckIds.length
+      ? await prismaClient.trip.groupBy({
+          by: ["truckId"],
+          where: {
+            truckId: { in: truckIds },
+            createdAt: { gte: start, lt: end },
+          },
+          _count: { _all: true },
+        })
+      : [];
 
     const countMap = new Map();
     for (const row of grouped) countMap.set(row.truckId, row._count._all);
@@ -289,12 +359,19 @@ const getTrucksSummaryByDate = async (req, res) => {
       };
     });
 
-    return res.json({ trucks: response, range: { from: start.toISOString(), to: end.toISOString() } });
+    return res.json({
+      trucks: response,
+      range: { from: start.toISOString(), to: end.toISOString() },
+      ...(psnQRaw
+        ? { meta: { psn: Math.trunc(Number(psnQRaw)), rfidsMatched: rfidsForPsn?.length ?? 0 } }
+        : {}),
+    });
   } catch (err) {
     console.error("getTrucksSummaryByDate error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 function startOfDateISTISO(dateString) {
   // Convert input ISO string to Date object
@@ -476,34 +553,23 @@ const getTripsForTruckByDate = async (req, res) => {
     const { start, end, error } = parseDateRange(fromQ, toQ);
     if (error) return res.status(400).json({ message: error });
 
-    // get truck name for RFID mapping
     const truck = await prismaClient.truck.findUnique({
       where: { id: truckId },
       select: { id: true, name: true },
     });
     if (!truck) return res.status(404).json({ message: "Truck not found" });
 
-    // ✅ include completed + incomplete trips that overlap the window
     const trips = await prismaClient.trip.findMany({
       where: {
         truckId,
         OR: [
-          // any trip event time inside window
           { departBsl: { gte: start, lt: end } },
-
-          // ongoing: started before end, not yet reachedBsl
           {
-            AND: [
-              { departBsl: { lt: end } },
-              { reachedBsl: null },
-            ],
+            AND: [{ departBsl: { lt: end } }, { reachedBsl: null }],
           },
         ],
       },
-      orderBy: [
-        { departBsl: "desc" },
-        { createdAt: "desc" },
-      ],
+      orderBy: [{ departBsl: "asc" }, { createdAt: "asc" }],
       select: {
         id: true,
         departBsl: true,
@@ -515,7 +581,9 @@ const getTripsForTruckByDate = async (req, res) => {
       },
     });
 
-    // attach psn window info per trip
+    // NEW: global dedupe across trips (latest trip keeps PSNs, older trips lose duplicates)
+    const seenPsns = new Set();
+
     const enriched = [];
     for (const tr of trips) {
       const tripStartISO = tr.departBsl ? iso(tr.departBsl) : null;
@@ -528,16 +596,40 @@ const getTripsForTruckByDate = async (req, res) => {
         psns: [],
       };
 
-      // ✅ only try PSN if we have departBsl
       if (tripStartISO) {
         psnInfo = await getPsnsOneMinuteBeforeAnchor({
           bucket: "TODAY",
-          rfid: truck.name, // RFID == truck.name (A6_480501)
+          rfid: truck.name,
           tripStartISO,
         });
       }
 
-      // ✅ status derived from available timestamps (helps frontend)
+      // NEW: remove PSNs that already appeared in earlier processed trips
+      // (since trips are sorted desc, newer trips are processed first)
+      if (Array.isArray(psnInfo?.psns) && psnInfo.psns.length) {
+        const filtered = [];
+        for (const p of psnInfo.psns) {
+          const v = p?.psn;
+          if (v == null) continue;
+
+          const key = String(v).trim();
+          if (!key) continue;
+
+          if (seenPsns.has(key)) continue; // already used by a newer trip
+
+          filtered.push(p);
+          seenPsns.add(key);
+        }
+
+        psnInfo = {
+          ...psnInfo,
+          psns: filtered,
+        };
+
+        // Optional: if anchorPsn was removed, you can keep anchor as-is
+        // to preserve debugging context. (We keep it unchanged.)
+      }
+
       const status =
         tr.reachedBsl
           ? "COMPLETED"
@@ -569,6 +661,100 @@ const getTripsForTruckByDate = async (req, res) => {
   }
 };
 
+
+
+const movePsnBetweenRfids = async (req, res) => {
+  try {
+    const { psn, psnTime, fromRfidId, toRfidId } = req.body ?? {};
+
+    if (!psn || !psnTime || !fromRfidId || !toRfidId) {
+      return res.status(400).json({
+        message: "psn, psnTime, fromRfidId, toRfidId are required",
+      });
+    }
+    if (String(fromRfidId) === String(toRfidId)) {
+      return res.status(400).json({ message: "fromRfidId and toRfidId must be different" });
+    }
+
+    // choose bucket (default TODAY)
+    const bucket = (req.query.bucket ?? "TODAY").toString();
+    const org = "BSL Kharkhoda";
+
+    // Create APIs
+    const writeApi = influxDB.getWriteApi(org, bucket, "ns");
+    const deleteApi = new DeleteAPI(influxDB);
+
+    // 1) WRITE the psn point to toRfidId at the same timestamp
+    // Use line protocol with RFC3339 time -> influx client will handle it if you use Point+Date,
+    // but Date will lose ns. So we write a record line with explicit timestamp (ns) best-effort:
+    //
+    // We'll use Date for precision up to ms; if your psnTime has ns, Influx will still store ms-level here.
+    // If you need true ns preservation, tell me your exact _time format and I’ll convert to ns integer.
+    const tsDate = new Date(psnTime);
+    if (Number.isNaN(tsDate.getTime())) {
+      return res.status(400).json({ message: "Invalid psnTime" });
+    }
+
+    // Write using Point (ms precision)
+    const n = Number(psn);
+if (!Number.isFinite(n)) {
+  return res.status(400).json({ message: "psn must be a number for this measurement" });
+}
+    const p = new Point("GPS")
+  .tag("RFID", String(toRfidId))
+  .intField("psn", Math.trunc(n))
+  .timestamp(new Date(psnTime));    
+
+    p.timestamp(tsDate);
+    writeApi.writePoint(p);
+    await writeApi.flush();
+
+    // 2) DELETE the point(s) from fromRfidId at that timestamp window
+    // Influx delete API works on a time range + predicate.
+    // We'll delete only a tiny window around psnTime to avoid deleting too much.
+    const start = new Date(tsDate.getTime() - 1).toISOString(); // -1ms
+    const stop = new Date(tsDate.getTime() + 1).toISOString();  // +1ms (exclusive-ish)
+
+    const predicate = `_measurement="GPS" AND RFID="${String(fromRfidId).replace(/"/g, '\\"')}"`;
+
+    try {
+      await deleteApi.postDelete({
+        org,
+        bucket,
+        body: { start, stop, predicate },
+      });
+    } catch (delErr) {
+      // rollback attempt: remove what we just wrote to toRfidId in the same window
+      try {
+        const rollbackPredicate = `_measurement="GPS" AND RFID="${String(toRfidId).replace(/"/g, '\\"')}"`;
+        await deleteApi.postDelete({
+          org,
+          bucket,
+          body: { start, stop, predicate: rollbackPredicate },
+        });
+      } catch (rbErr) {
+        // ignore rollback failure; return original delete error
+      }
+      throw delErr;
+    }
+
+    return res.json({
+      ok: true,
+      moved: {
+        psn: String(psn),
+        psnTime: tsDate.toISOString(),
+        fromRfidId: String(fromRfidId),
+        toRfidId: String(toRfidId),
+        bucket,
+      },
+    });
+  } catch (err) {
+    console.error("movePsnBetweenRfids error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+
 const getPsnCardsNotDepartedAfterPsn = async (req, res) => {
   const {shift}=req.query
   const shiftIndex=shift.charCodeAt(0)-'A'.charCodeAt(0)
@@ -579,7 +765,7 @@ const getPsnCardsNotDepartedAfterPsn = async (req, res) => {
       }
     })
     const shiftStart=shifts[shiftIndex]?.start
-    
+
     const endISO = new Date().toISOString(); // now
     const { startISO, error } = shiftStartTodayISTToUtcISO(shiftStart);
     console.log(startISO,endISO)
@@ -728,110 +914,18 @@ from(bucket: "${fluxEscape("TODAY")}")
   }
 };
 
-
-const movePsnBetweenRfids = async (req, res) => {
-  try {
-    const { psn, psnTime, fromRfidId, toRfidId } = req.body ?? {};
-
-    if (!psn || !psnTime || !fromRfidId || !toRfidId) {
-      return res.status(400).json({
-        message: "psn, psnTime, fromRfidId, toRfidId are required",
-      });
-    }
-    if (String(fromRfidId) === String(toRfidId)) {
-      return res.status(400).json({ message: "fromRfidId and toRfidId must be different" });
-    }
-
-    // choose bucket (default TODAY)
-    const bucket = (req.query.bucket ?? "TODAY").toString();
-    const org = "BSL Kharkhoda";
-
-    // Create APIs
-    const writeApi = influxDB.getWriteApi(org, bucket, "ns");
-    const deleteApi = new DeleteAPI(influxDB);
-
-    // 1) WRITE the psn point to toRfidId at the same timestamp
-    // Use line protocol with RFC3339 time -> influx client will handle it if you use Point+Date,
-    // but Date will lose ns. So we write a record line with explicit timestamp (ns) best-effort:
-    //
-    // We'll use Date for precision up to ms; if your psnTime has ns, Influx will still store ms-level here.
-    // If you need true ns preservation, tell me your exact _time format and I’ll convert to ns integer.
-    const tsDate = new Date(psnTime);
-    if (Number.isNaN(tsDate.getTime())) {
-      return res.status(400).json({ message: "Invalid psnTime" });
-    }
-
-    // Write using Point (ms precision)
-    const n = Number(psn);
-if (!Number.isFinite(n)) {
-  return res.status(400).json({ message: "psn must be a number for this measurement" });
-}
-    const p = new Point("GPS")
-  .tag("RFID", String(toRfidId))
-  .intField("psn", Math.trunc(n))
-  .timestamp(new Date(psnTime));    
-
-    p.timestamp(tsDate);
-    writeApi.writePoint(p);
-    await writeApi.flush();
-
-    // 2) DELETE the point(s) from fromRfidId at that timestamp window
-    // Influx delete API works on a time range + predicate.
-    // We'll delete only a tiny window around psnTime to avoid deleting too much.
-    const start = new Date(tsDate.getTime() - 1).toISOString(); // -1ms
-    const stop = new Date(tsDate.getTime() + 1).toISOString();  // +1ms (exclusive-ish)
-
-    const predicate = `_measurement="GPS" AND RFID="${String(fromRfidId).replace(/"/g, '\\"')}"`;
-
-    try {
-      await deleteApi.postDelete({
-        org,
-        bucket,
-        body: { start, stop, predicate },
-      });
-    } catch (delErr) {
-      // rollback attempt: remove what we just wrote to toRfidId in the same window
-      try {
-        const rollbackPredicate = `_measurement="GPS" AND RFID="${String(toRfidId).replace(/"/g, '\\"')}"`;
-        await deleteApi.postDelete({
-          org,
-          bucket,
-          body: { start, stop, predicate: rollbackPredicate },
-        });
-      } catch (rbErr) {
-        // ignore rollback failure; return original delete error
-      }
-      throw delErr;
-    }
-
-    return res.json({
-      ok: true,
-      moved: {
-        psn: String(psn),
-        psnTime: tsDate.toISOString(),
-        fromRfidId: String(fromRfidId),
-        toRfidId: String(toRfidId),
-        bucket,
-      },
-    });
-  } catch (err) {
-    console.error("movePsnBetweenRfids error", err);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
 module.exports = {
   createTruck,
   updateTruck,
   getAllTrucks,
   getTruckById,
-  getPsnCardsNotDepartedAfterPsn,
+	getPsnCardsNotDepartedAfterPsn,
+  movePsnBetweenRfids,
+
   // existing
   getLiveTrucks,
 
   // NEW for ArrivalDetails
-  movePsnBetweenRfids,  
   getTrucksSummaryByDate,
   getTripsForTruckByDate,
 };
-
