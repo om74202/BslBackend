@@ -3662,7 +3662,7 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
   }
 
 
-  const tplPath ="/home/Saurabh/BslBackend/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+  const tplPath ="/home/opsight/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
 
   const lines = await prismaClient.line.findMany({ select: { lineId: true } });
   const lineIds = lines.map((l) => l.lineId);
@@ -3687,7 +3687,7 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
   const to =
     (Array.isArray(recipients) && recipients.length > 0
       ? recipients
-      : ["ommishra@opsight.ai","arunkumar@opsight.ai"]
+      : ["ommishra@opsight.ai","ommishra74202@gmail.com"]
     ).filter(Boolean);
 
   const subject = `Performance Report - ${date} - Shift ${shift}`;
