@@ -52,12 +52,12 @@ bootRules();
 initPingGuardSubscriber({ topic: "update" });
 
 function pingRunModeAPI() {
+      maybeSendDailyShiftReports()
 	    if (!isPingAllowedNow(rules)) {
     // optional log
     console.log("[ping] blocked by rules");
     return;
   }
-      maybeSendDailyShiftReports()
 
 
   fetch("http://localhost:3001/api/influx/check-runmode", {

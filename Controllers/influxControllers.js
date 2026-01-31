@@ -3675,6 +3675,8 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
     templatePdfPath: tplPath,
     templatePageIndex,
   });
+      console.log("Report check executed");
+
 
 
   const baseName = `Performance_Report_${safeFilePart(date)}_Shift_${safeFilePart(shift)}`;
