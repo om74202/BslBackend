@@ -489,6 +489,7 @@ const mailConfig = {
 		level:"suman",
 		emails:[
       // "Suman.Yadav@bharatseats.net",
+      ,"ommishra@opsight.ai",
       // "mukesh.yadav@bharatseats.net"
     ]
 	},
@@ -651,7 +652,7 @@ const checkRunModeAndSendAlerts = async () => {
           console.log("sending in process ,for ", email);
           if (
             (email === "Rajiv.Arora@bharatseats.net" ||
-              email === "ommishra@opsight.ai" ||
+              // email === "ommishra@opsight.ai" ||
               email === "arunkumar@opsight.ai" ||
               email === "aniket.singh@bharatseats.net") &&
             !message.isCeoSend
@@ -713,6 +714,7 @@ const checkRunModeAndSendAlerts = async () => {
       emails: [
         //  "Rajiv.Arora@bharatseats.net",
         // "mohan.mishra@bharatseats.net",
+        "ommishra@opsight.ai",
 
       ],
     },
