@@ -647,6 +647,7 @@ const checkRunModeAndSendAlerts = async () => {
     console.log(lineName, info, "So email will be sent for this floortime ", floorTime, message);
 
     async function sendMailsSequentially(emails, info, lineName) {
+      console.log("send mails sequentially function , check",emails);
       for (const email of emails) {
         try {
           console.log("sending in process ,for ", email,message.isCeoSend);
@@ -675,7 +676,6 @@ const checkRunModeAndSendAlerts = async () => {
       const config = mailConfig[floorTime] || (isExtendedLevel3 ? mailConfig[35] : null);
       console.log("outside config", floorTime);
       if (config) {
-        console.log("inside sendMailSequence");
         await sendMailsSequentially(config.emails, info, lineName);
         console.log(`${config.level} mail sent for floorTime:`, floorTime);
       } else {
