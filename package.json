@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "bun build ./index.js --outdir ./dist --target bun --format cjs --external @prisma/client --external prisma --external bcrypt --external @mapbox/node-pre-gyp"
   },
   "keywords": [],
   "author": "",
