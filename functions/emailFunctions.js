@@ -664,6 +664,7 @@ const checkRunModeAndSendAlerts = async () => {
           console.log(`✅ Sent to ${email}`);
           await sleep(2000);
         } catch (err) {
+          console.log(err)
           console.error(`❌ Failed to send to ${email}:`, err.message);
         }
       }
