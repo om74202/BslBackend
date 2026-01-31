@@ -649,10 +649,9 @@ const checkRunModeAndSendAlerts = async () => {
     async function sendMailsSequentially(emails, info, lineName) {
       for (const email of emails) {
         try {
-          console.log("sending in process ,for ", email);
+          console.log("sending in process ,for ", email,message.isCeoSend);
           if (
             (email === "Rajiv.Arora@bharatseats.net" ||
-              // email === "ommishra@opsight.ai" ||
               email === "arunkumar@opsight.ai" ||
               email === "aniket.singh@bharatseats.net") &&
             !message.isCeoSend
