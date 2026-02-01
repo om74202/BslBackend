@@ -858,24 +858,56 @@ from(bucket: "${fluxEscape("TODAY")}")
         // Rule #1: PSN exists => latestTrip.reachedMsil should be null
         // if (latestTrip.reachedBsl != null) continue;
 
-        const psnInfo = psnByRfid.get(safe.name);
+        // const psnInfo = psnByRfid.get(safe.name);
 
-        const card = {
-          id: safe.id,
-          name: safe.name,
-          alias: safe.alias ?? null,
-          status: safe.status ?? null,
-          numberPlate: safe.data?.numberPlate ?? null,
-          zone: safe.data?.zone ?? null,
-          lastPollAt: safe.data?.lastPollAt ?? null,
-        };
+        // const card = {
+        //   id: safe.id,
+        //   name: safe.name,
+        //   alias: safe.alias ?? null,
+        //   status: safe.status ?? null,
+        //   numberPlate: safe.data?.numberPlate ?? null,
+        //   zone: safe.data?.zone ?? null,
+        //   lastPollAt: safe.data?.lastPollAt ?? null,
+        // };
 
-        cards.push({
-          card,
-          psnsInit: psnInfo?.psnsInit ?? [],
-          lastPsn: psnInfo?.lastPsn ?? null,
-          lastPsnTime: psnInfo?.lastPsnTime ?? null,
-        });
+        // cards.push({
+        //   card,
+        //   psnsInit: psnInfo?.psnsInit ?? [],
+        //   lastPsn: psnInfo?.lastPsn ?? null,
+        //   lastPsnTime: psnInfo?.lastPsnTime ?? null,
+        // });
+
+               const psnInfo = psnByRfid.get(safe.name);
+	        // Filter PSNs: only those after latestTrip.reachedBsl
+  const reachedBslTime = latestTrip?.reachedBsl ? new Date(latestTrip.reachedBsl) : null;
+
+  const filteredPsns = (psnInfo?.psnsInit ?? []).filter((p) => {
+    if (!reachedBslTime) return true; // allow by default if reachedBsl not defined
+    const psnTime = p?.time ? new Date(p.time) : null;
+    if (!psnTime || Number.isNaN(psnTime.getTime())) return false; // drop invalid times
+    return psnTime > reachedBslTime;
+  });
+
+  // Compute last PSN AFTER filtering
+  const lastFiltered = filteredPsns.length ? filteredPsns[filteredPsns.length - 1] : null;
+
+  const card = {
+    id: safe.id,
+    name: safe.name,
+    alias: safe.alias ?? null,
+    status: safe.status ?? null,
+    numberPlate: safe.data?.numberPlate ?? null,
+    zone: safe.data?.zone ?? null,
+    lastPollAt: safe.data?.lastPollAt ?? null,
+  };
+
+  cards.push({
+    card,
+    psnsInit: filteredPsns.slice(-8),
+    lastPsn: lastFiltered?.psn ?? null,
+    lastPsnTime: lastFiltered?.time ?? null,
+  });
+
       } else {
         // Rule #2: PSN doesn't exist => latestTrip.departBsl should NOT be null
         if (latestTrip.departBsl == null) continue;

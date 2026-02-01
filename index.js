@@ -151,7 +151,7 @@ app.use(
 
 
 app.get('/',async (req,res)=>{
-    res.json({message:"hiiii "})
+    res.json({message:""})
 })
 app.use("/api/user",userRouter)
 app.use('/api/influx',influxRouter);

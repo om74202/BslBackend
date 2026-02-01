@@ -22,7 +22,7 @@ function maybeSendDailyShiftReports() {
   const mm = istNow.getMinutes();
 
   let shiftToSend = null;
-  if (hh === 17 && mm === 30) shiftToSend = "A";
+  if (hh === 15 && mm === 0) shiftToSend = "A";
   if (hh === 23 && mm === 0) shiftToSend = "B";
   if (!shiftToSend) return;
 
