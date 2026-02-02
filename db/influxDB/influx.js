@@ -4,7 +4,6 @@ const { BucketsAPI } = require('@influxdata/influxdb-client-apis');
 const { env } = require('process');
 
 
-
 // Set up environment variables or directly replace with your values
 
 const url ="http://20.197.46.212:8086"
