@@ -58,11 +58,11 @@ function isnotRealtime(utcTimeStr) {
 
   if (floorTime === 5 || (floorTime >= 20 && floorTime % 20 === 0)) {
     	 const emails=[
-				 "naresh.yadav@bharatseats.net",
+				//  "naresh.yadav@bharatseats.net",
 		 "ommishra@opsight.ai",
-		          "nishant.kundu@bharatseats.net",
-                    "mohan.mishra@bharatseats.net",
-      "mukesh.yadav@bharatseats.net",
+		          // "nishant.kundu@bharatseats.net",
+                    // "mohan.mishra@bharatseats.net",
+      // "mukesh.yadav@bharatseats.net",
 		 ]
     // const emails = ["ommishra@opsight.ai"];
     isEmailSent = true;
@@ -454,11 +454,11 @@ async function checkLast5MinutesData(data) {
       console.log("changing the isEmailsent to ", isEmailSent);
 
       const emails = [
-        "naresh.yadav@bharatseats.net",
+        // "naresh.yadav@bharatseats.net",
         "ommishra@opsight.ai",
-        "nishant.kundu@bharatseats.net",
-        "mohan.mishra@bharatseats.net",
-        "mukesh.yadav@bharatseats.net",
+        // "nishant.kundu@bharatseats.net",
+        // "mohan.mishra@bharatseats.net",
+        // "mukesh.yadav@bharatseats.net",
       ];
       sendMailsSequentiallyForRestore(emails);
 
@@ -474,33 +474,33 @@ const mailConfig = {
       level: "Level 1",
       emails: [
 	      "ommishra@opsight.ai",
-        "mukesh.yadav@bharatseats.net",
+        // "mukesh.yadav@bharatseats.net",
       ],
     },
     10: {
       level: "Level 2",
       emails: [
 	      "ommishra@opsight.ai",
-        "mukesh.yadav@bharatseats.net",
-	      "Yogesh.Bansal@bharatseats.net",
+        // "mukesh.yadav@bharatseats.net",
+	      // "Yogesh.Bansal@bharatseats.net",
       ],
     },
 	20:{
 		level:"suman",
 		emails:[
-      "Suman.Yadav@bharatseats.net"
+      // "Suman.Yadav@bharatseats.net"
       ,"ommishra@opsight.ai",
-      "mukesh.yadav@bharatseats.net"
+      // "mukesh.yadav@bharatseats.net"
     ]
 	},
     35: {
       level: "Level 3",
       emails: [
         "ommishra@opsight.ai",
-         "naresh.yadav@bharatseats.net",
-         "aniket.singh@bharatseats.net",
-         "mukesh.yadav@bharatseats.net",
-	     "Rajiv.Arora@bharatseats.net",
+        //  "naresh.yadav@bharatseats.net",
+        //  "aniket.singh@bharatseats.net",
+        //  "mukesh.yadav@bharatseats.net",
+	    //  "Rajiv.Arora@bharatseats.net",
       ],
     },
   };
@@ -654,7 +654,7 @@ const checkRunModeAndSendAlerts = async () => {
           if (
             (email === "Rajiv.Arora@bharatseats.net" ||
               email === "arunkumar@opsight.ai" ||
-              email==="ommishra@opsight.ai" ||
+              // email==="ommishra@opsight.ai" ||
               email === "aniket.singh@bharatseats.net") &&
             !message.isCeoSend
           ) {
@@ -695,26 +695,26 @@ const checkRunModeAndSendAlerts = async () => {
     12: {
       level: "Level 1",
       emails: [
-         "mukesh.yadav@bharatseats.net",
+        //  "mukesh.yadav@bharatseats.net",
          "ommishra@opsight.ai",
-         "mohan.mishra@bharatseats.net",
-        "Gaurav.kumar@bharatseats.net",
+        //  "mohan.mishra@bharatseats.net",
+        // "Gaurav.kumar@bharatseats.net",
       ],
     },
     15: {
       level: "Level 2",
       emails: [
-         "Suman.Yadav@bharatseats.net",
+        //  "Suman.Yadav@bharatseats.net",
          "ommishra@opsight.ai",
-        ,"mohan.mishra@bharatseats.net",
+        // ,"mohan.mishra@bharatseats.net",
 
       ],
     },
     20: {
       level: "Level 3",
       emails: [
-         "Rajiv.Arora@bharatseats.net",
-        "mohan.mishra@bharatseats.net",
+        //  "Rajiv.Arora@bharatseats.net",
+        // "mohan.mishra@bharatseats.net",
         "ommishra@opsight.ai",
 
       ],
