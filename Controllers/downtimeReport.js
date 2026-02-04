@@ -780,16 +780,17 @@ const finalTarget = isHalfHourSlot ? Math.round(baseTarget / 2) : baseTarget;
     },
   });
 
-	const UnplannedDowntimes = await prismaClient.plannedShutdown.findMany({
+const UnplannedDowntimes = await prismaClient.plannedShutdown.findMany({
   where: {
-    lines: { some: { lineId: lineId } },
+    lines: { some: { lineId } },
     type: "UnplannedDowntime",
-    createdAt: {
-      gte: new Date(startTime),
-      lte: new Date(endTime),
-    },
+
+    // overlaps [startTime, endTime]
+    startTime: { lt: new Date(endTime) },
+    endTime: { gt: new Date(startTime) },
   },
 });
+
 
 
   // ✅ APPLY: if downtime spans multiple hour blocks -> merge rows into one
@@ -1447,14 +1448,15 @@ const getJPHReportRows = async (req, res) => {
 // ---------- fetch data ----------
 const UnplannedDowntimes = await prismaClient.plannedShutdown.findMany({
   where: {
-    lines: { some: { lineId: line } },
+    lines: { some: { lineId:line } },
     type: "UnplannedDowntime",
-    createdAt: {
-      gte: new Date(startTime),
-      lte: new Date(endTime),
-    },
+
+    // overlaps [startTime, endTime]
+    startTime: { lt: new Date(endTime) },
+    endTime: { gt: new Date(startTime) },
   },
 });
+
 //
 // ✅ JPH history: fetch one record before startTime + all within range
 //
