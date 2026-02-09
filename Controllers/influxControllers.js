@@ -3687,7 +3687,7 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
   const to =
     (Array.isArray(recipients) && recipients.length > 0
       ? recipients
-      : ["ommishra@opsight.ai","Rajiv.Arora@bharatseats.net","mukesh.yadav@bharatseats.net","aniket.singh@bharatseats.net"]
+      : ["ommishra74202@gmail.com","Rajiv.Arora@bharatseats.net","mukesh.yadav@bharatseats.net","aniket.singh@bharatseats.net"]
     ).filter(Boolean);
 
   const subject = `Performance Report - ${date} - Shift ${shift}`;
