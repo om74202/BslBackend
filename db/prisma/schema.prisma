@@ -89,6 +89,7 @@ model Line {
   downTimeReports     DowntimeReport[]
   plannedShutdowns    PlannedShutdown[]  @relation("LinePlannedShutdowns")
   targetJPHUpdateHistory   TargetJPHUpdateHistory[]
+  shiftLogBooks ShiftLogBook[]
   @@unique([lineName, organizationId])
 }
 
@@ -273,6 +274,27 @@ model DowntimeReport {
   rows          Json     // ✅ store rows here
   @@unique([lineId, reportDate, shift])
 }
+
+
+model ShiftLogBook {
+  id               String   @id @default(uuid())
+
+  lineId           String
+  reportDate       String
+  shift            String
+
+  // Store the whole sheet as JSON (easiest + matches your UI shape)
+  payload          Json
+  line             Line     @relation(fields: [lineId],references: [lineId])
+  isSubmitted      Boolean  @default(false)
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([lineId, reportDate, shift])
+  @@index([lineId, reportDate, shift])
+}
+
 
 
 

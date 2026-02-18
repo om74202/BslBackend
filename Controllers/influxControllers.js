@@ -1,7 +1,7 @@
 const express = require('express');
 const { influxDB } = require('../db/influxDB/influx');
 const prismaClient =require('../lib/prismaClient.js');
-
+const path = require("path");
 
 const { QueryApi, InfluxDB } = require('@influxdata/influxdb-client');
 const {format,parseISO} = require('date-fns')
@@ -20,6 +20,7 @@ const { PDFDocument } = require("pdf-lib");
 const crypto = require("crypto");
 const { sendPerformanceReportPdfMail } = require('../functions/userFunctions.js');
 const { extractHPCData, plantFields, torqueFields, getLastValidItem, reasonsMap } = require('../functions/shiftTimings.js');
+const { fillShiftLogBookPage, drawShiftLogBookPage, ensureShiftLogLogosLoaded } = require('../functions/shiftlogBook.js');
 
 function getLatestValidTorque(dataArray) {
   // Loop from the end of the array (most recent first)
@@ -3199,6 +3200,90 @@ const getDowntimeReportByLineDateShiftCumulative = async (req, res) => {
 };
 
 
+const getPerformanceReportPdf = async (req, res) => {
+  try {
+    const { date, shift, lineIds } = req.query;
+
+    if (!date || !shift || !lineIds) {
+      return res.status(400).json({
+        success: false,
+        message: "date (YYYY-MM-DD), shift (A/B/C/r) and lineIds (csv) are required",
+      });
+    }
+
+    const dateStr = String(date).trim();
+    const shiftVal = String(shift).trim();
+    const lineIdList = String(lineIds)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (lineIdList.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "lineIds must contain at least one id",
+      });
+    }
+
+    // Optional: validate shift
+    if (!["A", "B", "C", "r"].includes(shiftVal)) {
+      return res.status(400).json({
+        success: false,
+        message: "shift must be one of A, B, C, r",
+      });
+    }
+
+    // Optional: validate date format quickly (your build fn also parses)
+    const m = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
+    if (!m) {
+      return res.status(400).json({
+        success: false,
+        message: "date must be in YYYY-MM-DD format",
+      });
+    }
+
+    // ✅ Use your existing template path (same as email job)
+    const tplPath =
+      req.query.templatePdfPath ||
+      "/home/opsight/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+
+    // ✅ Build PDF (this should already insert Shift Log Book pages)
+    const pdfBuffer = await buildPerformanceReportPdfBuffer({
+      lineIds: lineIdList,
+      date: dateStr,
+      shift: shiftVal,
+      shiftLabel: `Shift ${shiftVal}`,
+      templatePdfPath: tplPath,
+      templatePageIndex: 1, // you used 1 earlier (0-based page2)
+    });
+
+    const safeFilePart = (v) =>
+      String(v ?? "")
+        .trim()
+        .replace(/[^\w.-]+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+
+    const fileName = `Performance_Report_${safeFilePart(dateStr)}_Shift_${safeFilePart(
+      shiftVal
+    )}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
+
+    return res.status(200).send(pdfBuffer);
+  } catch (err) {
+    console.error("getPerformanceReportPdf error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to generate performance report PDF",
+    });
+  }
+};
+
+
+
 
 
 
@@ -3480,36 +3565,228 @@ async function mergeTemplatePageAfterEachLineNode({
   return Buffer.from(merged);
 }
 
+
+const  mergeFilledShiftLogAfterEachLineNode= async({
+  jsPdfDoc,
+  templateBytes,
+  templatePageIndex = 1, // page 2 (0-based)
+  inserts = [],          // [{ afterPageNum, dateLabel, shiftLabel, payload }]
+}) =>{
+  const tplPdf = await PDFDocument.load(templateBytes);
+
+  const genBytes = jsPdfDoc.output("arraybuffer");
+  const outPdf = await PDFDocument.load(genBytes);
+
+  if (tplPdf.getPageCount() <= templatePageIndex) {
+    throw new Error("Template PDF does not have that many pages.");
+  }
+
+  // Insert from back to front so page numbers don’t shift
+  const sorted = [...inserts].sort((a, b) => b.afterPageNum - a.afterPageNum);
+
+  for (const ins of sorted) {
+    const [copied] = await outPdf.copyPages(tplPdf, [templatePageIndex]);
+
+    await fillShiftLogBookPage({
+      pdfDoc: outPdf,
+      page: copied,
+      dateLabel: ins.dateLabel,
+      shiftLabel: ins.shiftLabel,
+      payload: ins.payload,
+    });
+
+    outPdf.insertPage(ins.afterPageNum, copied);
+  }
+
+  const merged = await outPdf.save();
+  return Buffer.from(merged);
+}
 /**
  * Build the same PDF your frontend makes, but on the backend.
  * Returns a Buffer you can: res.send(buffer) OR attach in Nodemailer later.
  */
+
+
+
+
+
+async function fetchShiftLogBookData({ lineId, date, shift }) {
+  if (!lineId || !date || !shift) return null;
+
+  return prismaClient.shiftLogBook.findUnique({
+    where: {
+      lineId_reportDate_shift: {
+        lineId: String(lineId),
+        reportDate: String(date), // "YYYY-MM-DD"
+        shift: String(shift),
+      },
+    },
+    select: { payload: true, isSubmitted: true },
+  });
+}
+
+
+// async function buildPerformanceReportPdfBuffer({
+//   lineIds = [],
+//   date,
+//   shift,
+//   shiftLabel,
+//   templatePdfPath,
+//   templatePageIndex = 1,
+// }) {
+//   if (!Array.isArray(lineIds) || lineIds.length === 0) {
+//     throw new Error("lineIds must be a non-empty array");
+//   }
+
+//   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+//   let isFirstPage = true;
+
+//   // ✅ collect where + what to insert
+//   const inserts = [];
+
+//   for (const lineId of lineIds) {
+//     const report = await fetchPerformanceReportData({ lineId, date, shift });
+//     if (!report) continue;
+
+//     const normalizedRows = normalizePerformanceRows(report?.rows || []);
+
+//     if (!isFirstPage) doc.addPage();
+//     isFirstPage = false;
+
+//     const headerStartY = drawSQPHeader(doc, {
+//       lineName: report.lineName,
+//       shiftLabel: shiftLabel || String(shift),
+//       dateLabel: String(date),
+//     });
+
+//     const head = [
+//       [
+//         { content: "Time Slot", rowSpan: 2 },
+//         { content: "Production", colSpan: 2 },
+//         { content: "Model", rowSpan: 2 },
+//         { content: "Scheduled", colSpan: 2 },
+//         { content: "Reject", colSpan: 2 },
+//         { content: "Rework", colSpan: 2 },
+//         { content: "Downtime", colSpan: 2 },
+//         { content: "Loss Time", rowSpan: 2 },
+//         { content: "Loss", colSpan: 2 },
+//       ],
+//       [
+//         { content: "Hour" },
+//         { content: "Cum" },
+//         { content: "Hour" },
+//         { content: "Cum" },
+//         { content: "Hour" },
+//         { content: "Cum" },
+//         { content: "Hour" },
+//         { content: "Cum" },
+//         { content: "Start" },
+//         { content: "End" },
+//         { content: "Code" },
+//         { content: "Reason" },
+//       ],
+//     ];
+
+//     const body = normalizedRows.flatMap((r) => {
+//       const dts = (r.downtimes && r.downtimes.length) ? r.downtimes : [null];
+
+//       return dts.map((dt, idx) => [
+//         idx === 0 ? r.timeSlot : "",
+//         idx === 0 ? r.hour.Production : "",
+//         idx === 0 ? r.cum.Production : "",
+//         idx === 0 ? r.model : "",
+//         idx === 0 ? r.hour.Target : "",
+//         idx === 0 ? r.cum.Target : "",
+//         idx === 0 ? r.hour.Reject : "",
+//         idx === 0 ? r.cum.Reject : "",
+//         idx === 0 ? r.hour.Rework : "",
+//         idx === 0 ? r.cum.Rework : "",
+//         dt?.start ?? "",
+//         dt?.end ?? "",
+//         idx === 0 ? r.hour.lossTime : "",
+//         dt?.lossCode ?? "",
+//         dt?.lossReason ?? "",
+//       ]);
+//     });
+
+//     autoTable(doc, {
+//       startY: headerStartY,
+//       head,
+//       body,
+//       theme: "grid",
+//       styles: {
+//         fontSize: 8,
+//         halign: "center",
+//         valign: "middle",
+//         cellPadding: { top: 1, bottom: 1, left: 0, right: 0 },
+//         lineWidth: 0.2,
+//         lineColor: [0, 0, 0],
+//       },
+//       headStyles: {
+//         fillColor: [41, 128, 185],
+//         textColor: 255,
+//         halign: "center",
+//         lineWidth: 0.2,
+//       },
+//       columnStyles: {
+//         3: { cellWidth: 20 },
+//       },
+//     });
+
+//     // ✅ after this performance page, insert the filled shift log page
+//     const afterPageNum = doc.getNumberOfPages();
+
+//     const shiftLog = await fetchShiftLogBookData({ lineId, date, shift });
+//     console.log(shiftLog)
+//     const payload = shiftLog?.payload || {};
+
+//     inserts.push({
+//       afterPageNum,
+//       dateLabel: String(date),
+//       shiftLabel: shiftLabel || `Shift ${shift}`,
+//       payload,
+//     });
+//   }
+
+//   if (doc.getNumberOfPages() === 0) {
+//     throw new Error("No pages generated (check lineIds/data)");
+//   }
+
+//   const templateBytes = await fs.readFile(templatePdfPath);
+
+//   // ✅ Use the FILLED merge
+//   const mergedBuffer = await mergeFilledShiftLogAfterEachLineNode({
+//     jsPdfDoc: doc,
+//     templateBytes,
+//     templatePageIndex, // keep 1
+//     inserts,
+//   });
+
+//   return mergedBuffer;
+// }
+
 async function buildPerformanceReportPdfBuffer({
   lineIds = [],
-  date,              // "YYYY-MM-DD" (recommended) or ISO
-  shift,             // "A" | "B" | "C" | "r"
-  shiftLabel,        // what you want printed in header (e.g. "Shift A")
-  templatePdfPath,   // filesystem path to your template PDF
-  templatePageIndex = 1,
+  date,
+  shift,
+  shiftLabel,
 }) {
   if (!Array.isArray(lineIds) || lineIds.length === 0) {
     throw new Error("lineIds must be a non-empty array");
   }
 
+  // Start with landscape performance page
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  let isFirstPage = true;
-  const insertAfterPages = [];
+  let isFirst = true;
 
   for (const lineId of lineIds) {
     const report = await fetchPerformanceReportData({ lineId, date, shift });
-    if(!report){
-      continue
-    }
+    if (!report) continue;
+
+    if (!isFirst) doc.addPage("a4", "landscape");
+    isFirst = false;
+
     const normalizedRows = normalizePerformanceRows(report?.rows || []);
-
-    if (!isFirstPage) doc.addPage();
-    isFirstPage = false;
-
     const headerStartY = drawSQPHeader(doc, {
       lineName: report.lineName,
       shiftLabel: shiftLabel || String(shift),
@@ -3545,30 +3822,21 @@ async function buildPerformanceReportPdfBuffer({
     ];
 
     const body = normalizedRows.flatMap((r) => {
-      const dts = (r.downtimes && r.downtimes.length) ? r.downtimes : [null];
-
+      const dts = r.downtimes?.length ? r.downtimes : [null];
       return dts.map((dt, idx) => [
         idx === 0 ? r.timeSlot : "",
-
         idx === 0 ? r.hour.Production : "",
         idx === 0 ? r.cum.Production : "",
-
         idx === 0 ? r.model : "",
-
         idx === 0 ? r.hour.Target : "",
         idx === 0 ? r.cum.Target : "",
-
         idx === 0 ? r.hour.Reject : "",
         idx === 0 ? r.cum.Reject : "",
-
         idx === 0 ? r.hour.Rework : "",
         idx === 0 ? r.cum.Rework : "",
-
         dt?.start ?? "",
         dt?.end ?? "",
-
         idx === 0 ? r.hour.lossTime : "",
-
         dt?.lossCode ?? "",
         dt?.lossReason ?? "",
       ]);
@@ -3579,44 +3847,32 @@ async function buildPerformanceReportPdfBuffer({
       head,
       body,
       theme: "grid",
-      styles: {
-        fontSize: 8,
-        halign: "center",
-        valign: "middle",
-        cellPadding: { top: 1, bottom: 1, left: 0, right: 0 },
-        lineWidth: 0.2,
-        lineColor: [0, 0, 0],
-      },
-      headStyles: {
-        fillColor: [41, 128, 185],
-        textColor: 255,
-        halign: "center",
-        lineWidth: 0.2,
-      },
-      columnStyles: {
-        3: { cellWidth: 20 },
-      },
+      styles: { fontSize: 8, halign: "center", valign: "middle", lineWidth: 0.2 },
+      headStyles: { fillColor: [41, 128, 185], textColor: 255, halign: "center", lineWidth: 0.2 },
+      columnStyles: { 3: { cellWidth: 20 } },
     });
 
-    insertAfterPages.push(doc.getNumberOfPages());
+    // ✅ Add shift log page (portrait) for this line
+    const shiftLog = await fetchShiftLogBookData({ lineId, date, shift });
+    const payload = shiftLog?.payload || {};
+    await ensureShiftLogLogosLoaded()
+
+    doc.addPage("a4", "portrait");
+    drawShiftLogBookPage(doc, {
+      dateLabel: String(date),
+      shiftLabel: shiftLabel || `Shift ${shift}`,
+      payload,
+    });
   }
 
   if (doc.getNumberOfPages() === 0) {
     throw new Error("No pages generated (check lineIds/data)");
   }
 
-  const templateBytes = await fs.readFile(templatePdfPath);
-  const mergedBuffer = await mergeTemplatePageAfterEachLineNode({
-    jsPdfDoc: doc,
-    templateBytes,
-    templatePageIndex,
-    insertAfterPages,
-  });
-
-  return mergedBuffer;
+  // Return Buffer
+  const bytes = doc.output("arraybuffer");
+  return Buffer.from(bytes);
 }
-
-
 
 
 
@@ -3663,6 +3919,8 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
 
 
   const tplPath ="/home/opsight/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+  // const tplPath ="/home/om-mishra/BslVmFrontend/src/Assets/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+
 
   const lines = await prismaClient.line.findMany({ select: { lineId: true } });
   const lineIds = lines.map((l) => l.lineId);
@@ -3687,7 +3945,12 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
   const to =
     (Array.isArray(recipients) && recipients.length > 0
       ? recipients
-      : ["ommishra74202@gmail.com","Rajiv.Arora@bharatseats.net","mukesh.yadav@bharatseats.net","aniket.singh@bharatseats.net"]
+      : [
+        "ommishra74202@gmail.com",
+        "Rajiv.Arora@bharatseats.net",
+        "mukesh.yadav@bharatseats.net",
+        "aniket.singh@bharatseats.net"
+      ]
     ).filter(Boolean);
 
   const subject = `Performance Report - ${date} - Shift ${shift}`;
@@ -3736,7 +3999,7 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
 
 
 
-module.exports = { getDowntimeReportByLineDateShiftCumulative,sendTodayPerformanceReportPdf,
+module.exports = { getDowntimeReportByLineDateShiftCumulative,sendTodayPerformanceReportPdf,getPerformanceReportPdf,
   getSingleTorqueGun,getAllTorqueGuns,getSingleDrive,getAllDrivesData,getQualityData,getLineData,
   getPlantData,getCeoQualityData,getCeoTorqueData,getRunningSeatData,getCeoSeatProductionData,getCeoData,getPlantReportDate,getPlantReportDateRange};
 

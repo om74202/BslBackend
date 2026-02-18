@@ -1471,6 +1471,7 @@ const {
   getPlantReportDate,
   getPlantReportDateRange,
   getAllDrivesData,
+  getPerformanceReportPdf,
 } = require("../Controllers/influxControllers.js");
 
 
@@ -1502,7 +1503,7 @@ influxRouter.get("/ceo/qualityReview/:line/:date/:shift", getCeoQualityData);
 influxRouter.get("/plantReportRange/:shift/:date", getPlantReportDateRange);
 influxRouter.get("/plantReport/:shift/:date", getPlantReportDate);
 
-influxRouter.get("/performance-report", getDowntimeReportByLineDateShiftCumulative);
+influxRouter.get("/performance-report", getPerformanceReportPdf);
 
 // Manual trigger (unchanged behavior)
 influxRouter.post("/check-runmode", async (req, res) => {

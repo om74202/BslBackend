@@ -29,6 +29,7 @@ const { maybeSendDailyShiftReports } = require('./functions/performancePoller.js
 
 const http = require('http');
 const  idealParamRoute = require('./Routes/idealParams');
+const shiftLogBookRouter = require('./Routes/shiftLogBookRoute.js');
 
 
 const app=express();
@@ -58,7 +59,7 @@ function pingRunModeAPI() {
     console.log("[ping] blocked by rules");
     return;
   }
-
+  
 
   fetch("http://localhost:3001/api/influx/check-runmode", {
     method: "POST",
@@ -155,6 +156,7 @@ app.get('/',async (req,res)=>{
 })
 app.use("/api/user",userRouter)
 app.use('/api/influx',influxRouter);
+app.use('/api/shift-log-book', shiftLogBookRouter)
 app.use('/api/org',organisationRouter)
 app.use('/api/line',LineRouter);
 app.use('/api/device',deviceRouter);

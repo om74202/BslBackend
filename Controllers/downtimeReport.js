@@ -184,7 +184,7 @@ const applyUnplannedDowntimeSpansToRows = ({
 }) => {
   const shiftStartHHMM = toIstHHMM(new Date(shiftStartUtc));
   const shiftEndHHMM = toIstHHMM(new Date(shiftEndUtc));
-  console.log(unplannedDowntimes,rows)
+  // console.log(unplannedDowntimes,rows)
   const shiftStartMin = toMin(shiftStartHHMM);
   const shiftEndMin = toMin(shiftEndHHMM);
   const shiftCrossesMidnight = shiftEndMin < shiftStartMin;
