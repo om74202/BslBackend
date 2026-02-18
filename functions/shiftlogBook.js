@@ -18,8 +18,8 @@ function fitInBox(imgW, imgH, boxW, boxH) {
 
 
 // paths
-const BR_LOGO_PATH = "/home/om-mishra/Desktop/projects/BslBackend/BSL.png";
-const NACL_LOGO_PATH = "/home/om-mishra/Desktop/projects/BslBackend/BslHindiLogo.png";
+const BR_LOGO_PATH = "/home/opsight/BharatSeats/BslBackend/BSL.png";
+const NACL_LOGO_PATH = "/home/opsight/BharatSeats/BslBackend/BslHindiLogo.png";
 
 let BR_LOGO_DATAURL = null;
 let NACL_LOGO_DATAURL = null;
