@@ -30,6 +30,7 @@ const { maybeSendDailyShiftReports } = require('./functions/performancePoller.js
 const http = require('http');
 const  idealParamRoute = require('./Routes/idealParams');
 const shiftLogBookRouter = require('./Routes/shiftLogBookRoute.js');
+const activityTracker = require('./Routes/tracking.js');
 
 
 const app=express();
@@ -157,6 +158,7 @@ app.get('/',async (req,res)=>{
 app.use("/api/user",userRouter)
 app.use('/api/influx',influxRouter);
 app.use('/api/shift-log-book', shiftLogBookRouter)
+app.use("/api/activity-tracker", activityTracker);
 app.use('/api/org',organisationRouter)
 app.use('/api/line',LineRouter);
 app.use('/api/device',deviceRouter);

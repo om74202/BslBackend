@@ -276,6 +276,21 @@ model DowntimeReport {
 }
 
 
+model tracking_events {
+  id           BigInt   @id @default(autoincrement())
+  ts           DateTime @default(now()) @db.Timestamptz(6)
+  user_id      String
+  event_name   String
+  route        String?
+  page_name    String?
+  element_id   String?
+  element_text String?
+  metadata     Json?
+  ip           String?
+  user_agent   String?
+}
+
+
 model ShiftLogBook {
   id               String   @id @default(uuid())
 
