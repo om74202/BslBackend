@@ -21,6 +21,7 @@ const crypto = require("crypto");
 const { sendPerformanceReportPdfMail } = require('../functions/userFunctions.js');
 const { extractHPCData, plantFields, torqueFields, getLastValidItem, reasonsMap } = require('../functions/shiftTimings.js');
 const { fillShiftLogBookPage, drawShiftLogBookPage, ensureShiftLogLogosLoaded } = require('../functions/shiftlogBook.js');
+const { buildLiveRowsForShift } = require('./downtimeReport.js');
 
 function getLatestValidTorque(dataArray) {
   // Loop from the end of the array (most recent first)
@@ -2132,7 +2133,7 @@ const getPlantReportDateRange=async (req, res) => {
 
       perDayMeta.push({ ymd: toYMD(day), startTime, endTime });
 
-      // ✅ ONLY end-of-shift snapshot: group by LINE + _field, take last()
+      //  ONLY end-of-shift snapshot: group by LINE + _field, take last()
       const fluxQuery = `
 from(bucket: "${bucket}")
   |> range(start: time(v: "${startTime}"), stop: time(v: "${endTime}"))
@@ -2620,7 +2621,7 @@ from(bucket: "${bucket}")
     });
   });
 
-  // ✅ use the same fixed buildISTSlots (returns startIstMs/endIstMs/key/slotStartUtc)
+  //  use the same fixed buildISTSlots (returns startIstMs/endIstMs/key/slotStartUtc)
   const slots = buildISTSlots(startTime, endTime, shift);
 
   const findSlotIdx = (istMs) => {
@@ -2822,7 +2823,7 @@ const findSlotIdx = (istMs) => {
 
 const slotAgg = slots.map((s) => ({
   timeSlot: s.key,
-  slotStartUtc: s.slotStartUtc, // ✅ already UTC ISO
+  slotStartUtc: s.slotStartUtc, //  already UTC ISO
   points: [],
 }));
 
@@ -2861,9 +2862,9 @@ for (const dt of UnplannedDowntimes) {
     const durationMin = Math.round((overlapEnd - overlapStart) / 60000);
 
     downtimeBySlotIdx[i].push({
-      id: dt.id,                         // ✅ same id
+      id: dt.id,                         //  same id
       reason: dt.reason || "",
-      lossCode:dt.reason.slice(0,3) || "",           // ✅ same reason
+      lossCode:dt.reason.slice(0,3) || "",           //  same reason
       description: dt.description || "",
 
       startTime: fmtHHmmFromIstMs(overlapStart), // "07:00"
@@ -2931,10 +2932,10 @@ let rows = slotAgg.map((s, idx) => {
     actualJPH: hourSetProduction,
     actualJPHCumm: cumulative,
 
-    // ✅ downtime entries already computed
+    //  downtime entries already computed
     downtimeEntries: downtimeBySlotIdx[idx] || [],
 
-    // ✅ model/reject/rework columns added
+    //  model/reject/rework columns added
 
 
     meta: { fieldUsed: prodField },
@@ -3016,7 +3017,7 @@ async function populateDowntimeEntriesForSubmittedRows({
   if (!uniqueIds.length) return rows;
 
   // Fetch full records by ids
-  // ✅ assuming these ids belong to plannedShutdown table in your setup
+  //  assuming these ids belong to plannedShutdown table in your setup
   // If your ids are from another table, replace this model accordingly.
   const records = await prismaClient.plannedShutdown.findMany({
     where: { id: { in: uniqueIds } },
@@ -3121,7 +3122,7 @@ const getDowntimeReportByLineDateShiftCumulative = async (req, res) => {
           lineId,
         });
 
-    // ✅ populate downtimeEntries ONLY for submitted sheets
+    //  populate downtimeEntries ONLY for submitted sheets
     if (isSubmitted) {
       baseRows = await populateDowntimeEntriesForSubmittedRows({
         rows: baseRows,
@@ -3240,12 +3241,14 @@ const getPerformanceReportPdf = async (req, res) => {
       });
     }
 
-    // ✅ Use your existing template path (same as email job)
+    // Use your existing template path (same as email job)
     const tplPath =
       req.query.templatePdfPath ||
       "/home/opsight/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+    // const tplPath =
+    //   "/home/om-mishra/Desktop/projects/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
 
-    // ✅ Build PDF (this should already insert Shift Log Book pages)
+    // Build PDF (this should already insert Shift Log Book pages)
     const pdfBuffer = await buildPerformanceReportPdfBuffer({
       lineIds: lineIdList,
       date: dateStr,
@@ -3288,7 +3291,7 @@ const getPerformanceReportPdf = async (req, res) => {
 
 
 
-const  fetchPerformanceReportData=async({ lineId, date, shift })=> {
+const fetchPerformanceReportData = async ({ lineId, date, shift }) => {
   if (!lineId || !date || !shift) {
     throw new Error("lineId, date (YYYY-MM-DD) and shift are required");
   }
@@ -3312,20 +3315,59 @@ const  fetchPerformanceReportData=async({ lineId, date, shift })=> {
   });
 
   const influxLine = await getInfluxLineTagFromLineId(lineId);
-  if(!influxLine){
-    return
+  if (!influxLine) {
+    return;
   }
+
   const isSubmitted = Boolean(doc?.isSubmitted);
+  const dateYmd = String(date);
 
-  let baseRows = isSubmitted
-    ? (Array.isArray(doc?.rows) ? doc.rows : [])
-    : await fetchHourlySetProductionFromInflux({
-        shift: shiftVal,
-        dateObj: reportDate,
-        lineId,
-      });
+  //  Use the same builder used by downtime report live refresh
+  // so planned shutdown shrinking / unplanned span merging are preserved
+  const { rows: liveRows } = await buildLiveRowsForShift({
+    shift: shiftVal,
+    dateYmd,
+    lineId,
+  });
 
+  let baseRows = liveRows;
+
+  //  If submitted, preserve user-entered/stored fields
+  // while keeping live split structure
   if (isSubmitted) {
+    const storedRows = Array.isArray(doc?.rows) ? doc.rows : [];
+
+    const storedByTimeSlot = new Map();
+    for (const r of storedRows) {
+      storedByTimeSlot.set(r?.timeSlot, r);
+    }
+
+    baseRows = liveRows.map((lr) => {
+      const sr = storedByTimeSlot.get(lr.timeSlot);
+
+      const liveEntries = Array.isArray(lr?.downtimeEntries) ? lr.downtimeEntries : [];
+      const storedEntries = Array.isArray(sr?.downtimeEntries) ? sr.downtimeEntries : [];
+
+      const liveIds = new Set(liveEntries.map((e) => e?.id).filter(Boolean));
+
+      const extras = storedEntries
+        .filter((e) => e?.id && !liveIds.has(e.id))
+        .map((e) => ({ id: e.id, _fromStored: true }));
+
+      return {
+        ...lr,
+        remarks: sr?.remarks ?? lr?.remarks ?? "",
+        model: sr?.model ?? lr?.model ?? "",
+        targetJPH: lr?.targetJPH ?? sr?.targetJPH ?? 0,
+        actualJPH: lr?.actualJPH ?? sr?.actualJPH ?? 0,
+        downtimeEntries: [...liveEntries, ...extras],
+        reject: sr?.reject ?? lr?.reject,
+        rework: sr?.rework ?? lr?.rework,
+        setProduction: sr?.setProduction ?? lr?.setProduction,
+        targetJPHCumm: sr?.targetJPHCumm ?? lr?.targetJPHCumm,
+      };
+    });
+
     baseRows = await populateDowntimeEntriesForSubmittedRows({
       rows: baseRows,
       shiftVal,
@@ -3376,12 +3418,12 @@ const  fetchPerformanceReportData=async({ lineId, date, shift })=> {
   return {
     isSubmitted,
     lineId,
-    reportDate, // Date object
+    reportDate,
     shift: shiftVal,
     lineName: line?.lineName || lineId,
     rows: mergedRows,
   };
-}
+};
 
 
 // Same as your frontend drawSQPHeader, but safer fonts for Node
@@ -3537,68 +3579,8 @@ function normalizePerformanceRows(rows = []) {
   });
 }
 
-async function mergeTemplatePageAfterEachLineNode({
-  jsPdfDoc,
-  templateBytes,
-  templatePageIndex = 1,
-  insertAfterPages = [],
-}) {
-  const tplPdf = await PDFDocument.load(templateBytes);
-
-  const genBytes = jsPdfDoc.output("arraybuffer");
-  const outPdf = await PDFDocument.load(genBytes);
-
-  if (tplPdf.getPageCount() <= templatePageIndex) {
-    throw new Error("Template PDF does not have that many pages.");
-  }
-
-  const sorted = [...insertAfterPages].sort((a, b) => b - a);
-
-  for (const afterPageNum of sorted) {
-    const [copied] = await outPdf.copyPages(tplPdf, [templatePageIndex]);
-    outPdf.insertPage(afterPageNum, copied);
-  }
-
-  const merged = await outPdf.save();
-  return Buffer.from(merged);
-}
 
 
-const  mergeFilledShiftLogAfterEachLineNode= async({
-  jsPdfDoc,
-  templateBytes,
-  templatePageIndex = 1, // page 2 (0-based)
-  inserts = [],          // [{ afterPageNum, dateLabel, shiftLabel, payload }]
-}) =>{
-  const tplPdf = await PDFDocument.load(templateBytes);
-
-  const genBytes = jsPdfDoc.output("arraybuffer");
-  const outPdf = await PDFDocument.load(genBytes);
-
-  if (tplPdf.getPageCount() <= templatePageIndex) {
-    throw new Error("Template PDF does not have that many pages.");
-  }
-
-  // Insert from back to front so page numbers don’t shift
-  const sorted = [...inserts].sort((a, b) => b.afterPageNum - a.afterPageNum);
-
-  for (const ins of sorted) {
-    const [copied] = await outPdf.copyPages(tplPdf, [templatePageIndex]);
-
-    await fillShiftLogBookPage({
-      pdfDoc: outPdf,
-      page: copied,
-      dateLabel: ins.dateLabel,
-      shiftLabel: ins.shiftLabel,
-      payload: ins.payload,
-    });
-
-    outPdf.insertPage(ins.afterPageNum, copied);
-  }
-
-  const merged = await outPdf.save();
-  return Buffer.from(merged);
-}
 /**
  * Build the same PDF your frontend makes, but on the backend.
  * Returns a Buffer you can: res.send(buffer) OR attach in Nodemailer later.
@@ -3639,7 +3621,7 @@ async function fetchShiftLogBookData({ lineId, date, shift }) {
 //   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
 //   let isFirstPage = true;
 
-//   // ✅ collect where + what to insert
+//   //  collect where + what to insert
 //   const inserts = [];
 
 //   for (const lineId of lineIds) {
@@ -3731,7 +3713,7 @@ async function fetchShiftLogBookData({ lineId, date, shift }) {
 //       },
 //     });
 
-//     // ✅ after this performance page, insert the filled shift log page
+//     //  after this performance page, insert the filled shift log page
 //     const afterPageNum = doc.getNumberOfPages();
 
 //     const shiftLog = await fetchShiftLogBookData({ lineId, date, shift });
@@ -3752,7 +3734,7 @@ async function fetchShiftLogBookData({ lineId, date, shift }) {
 
 //   const templateBytes = await fs.readFile(templatePdfPath);
 
-//   // ✅ Use the FILLED merge
+//   //  Use the FILLED merge
 //   const mergedBuffer = await mergeFilledShiftLogAfterEachLineNode({
 //     jsPdfDoc: doc,
 //     templateBytes,
@@ -3850,7 +3832,7 @@ async function buildPerformanceReportPdfBuffer({
       columnStyles: { 3: { cellWidth: 20 } },
     });
 
-    // ✅ Add shift log page (portrait) for this line
+    //  Add shift log page (portrait) for this line
     const shiftLog = await fetchShiftLogBookData({ lineId, date, shift });
     const payload = shiftLog?.payload || {};
     await ensureShiftLogLogosLoaded()

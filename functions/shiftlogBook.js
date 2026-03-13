@@ -3,13 +3,13 @@ const fs =require("fs/promises")
 
 
 
-// ✅ Buffer -> dataURL that jsPDF understands
+//  Buffer -> dataURL that jsPDF understands
 async function pngFileToDataUrl(absPath) {
   const buf = await fs.readFile(absPath);
   return `data:image/png;base64,${buf.toString("base64")}`;
 }
 
-// ✅ keep aspect ratio inside a target box
+//  keep aspect ratio inside a target box
 function fitInBox(imgW, imgH, boxW, boxH) {
   const s = Math.min(boxW / imgW, boxH / imgH);
   return { w: imgW * s, h: imgH * s };
@@ -20,6 +20,8 @@ function fitInBox(imgW, imgH, boxW, boxH) {
 // paths
 const BR_LOGO_PATH = "/home/opsight/BharatSeats/BslBackend/BSL.png";
 const NACL_LOGO_PATH = "/home/opsight/BharatSeats/BslBackend/BslHindiLogo.png";
+// const BR_LOGO_PATH = "/home/om-mishra/Desktop/projects/BslBackend/BSL.png";
+// const NACL_LOGO_PATH = "/home/om-mishra/Desktop/projects/BslBackend/BslHindiLogo.png";
 
 let BR_LOGO_DATAURL = null;
 let NACL_LOGO_DATAURL = null;

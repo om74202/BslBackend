@@ -360,12 +360,13 @@ const splitRowByPlannedIntervals = (row, plannedIntervals) => {
   const rowEnd = row._endMin;
 
   // collect overlaps and clamp to row
-  const overlaps = plannedIntervals
-    .filter((p) => overlap(row._startMin, row._endMin, p.startMin, p.endMin))
-    .map((p) => ({
-      startMin: Math.max(row._startMin, p.startMin),
-      endMin: Math.min(row._endMin, p.endMin),
-    }));
+const overlaps = plannedIntervals
+  .filter((p) => overlap(row._startMin, row._endMin, p.startMin, p.endMin))
+  .map((p) => ({
+    ...p,
+    startMin: Math.max(row._startMin, p.startMin),
+    endMin: Math.min(row._endMin, p.endMin),
+  }));
 
   const merged = mergeIntervals(overlaps);
   if (!merged.length) return [row];
@@ -383,17 +384,33 @@ const splitRowByPlannedIntervals = (row, plannedIntervals) => {
     }
 
     // planned part
-    segs.push({
-      id: `PLANNED__${row.id}__${p.startMin}-${p.endMin}`,
-      timeSlot: `${minToHHMM(p.startMin)} - ${minToHHMM(p.endMin)}`,
-      targetJPH: null,
-      actualJPH: null,
-      downtimeEntries: [],
-      remarks: "PlannedShutdown",
-      _startMin: p.startMin,
-      _endMin: p.endMin,
-      _isPlanned: true,
-    });
+const plannedStartHHMM = minToHHMM(p.startMin);
+const plannedEndHHMM = minToHHMM(p.endMin);
+const plannedDuration = Math.max(0, p.endMin - p.startMin);
+
+segs.push({
+  id: `PLANNED__${row.id}__${p.startMin}-${p.endMin}`,
+  timeSlot: `${plannedStartHHMM} - ${plannedEndHHMM}`,
+  targetJPH: null,
+  actualJPH: null,
+  downtimeEntries: [
+    {
+      id: p.id,
+      type: "PlannedShutdown",
+      startTime: '-',
+      endTime: "-",
+      duration: 0,
+      lossCode: "PS",
+      lossReason: p.reason || "Planned Shutdown",
+      reason: p.reason || "Planned Shutdown",
+      description: p.description || "Planned Shutdown",
+    },
+  ],
+  remarks: p.reason || "Planned Shutdown",
+  _startMin: p.startMin,
+  _endMin: p.endMin,
+  _isPlanned: true,
+});
 
     cursorStart = p.endMin;
   }
@@ -683,18 +700,28 @@ const buildLiveRowsForShift = async ({ shift, dateYmd, lineId }) => {
     },
   });
 
-  const plannedIntervals = mergeIntervals(
-    plannedShutdowns
-      .map((ps) => {
-        const st = toIstHHMM(ps.startTime);
-        const et = toIstHHMM(ps.endTime);
-        const startMin = hhmmToMin(st);
-        const endMin = hhmmToMin(et);
-        if (startMin == null || endMin == null) return null;
-        return { startMin, endMin };
-      })
-      .filter(Boolean)
-  );
+const plannedIntervals = mergeIntervals(
+  plannedShutdowns
+    .map((ps) => {
+      const st = toIstHHMM(ps.startTime);
+      const et = toIstHHMM(ps.endTime);
+      const startMin = hhmmToMin(st);
+      const endMin = hhmmToMin(et);
+      if (startMin == null || endMin == null) return null;
+      console.log(ps.reason)
+      return {
+        id: ps.id,
+        type: ps.type,
+        reason: ps.reason || "Planned Shutdown",
+        description: ps.description || "Planned Shutdown",
+        startMin,
+        endMin,
+        startTime: st,
+        endTime: et,
+      };
+    })
+    .filter(Boolean)
+);
 
   // unplanned downtimes from DB (latest)
 	//
@@ -909,7 +936,7 @@ mergedRows = liveRows.map((lr) => {
   };
 });
 
-    // ✅ collect downtime ids from merged rows
+    // collect downtime ids from merged rows
     const downtimeIds = [];
     for (const r of mergedRows) {
       const entries = Array.isArray(r?.downtimeEntries) ? r.downtimeEntries : [];
@@ -921,7 +948,7 @@ mergedRows = liveRows.map((lr) => {
 
     const uniqueIds = [...new Set(downtimeIds)];
 
-    // ✅ fetch PlannedShutdown rows for these ids and convert to IST HH:mm
+    //  fetch PlannedShutdown rows for these ids and convert to IST HH:mm
     let shutdownMap = {};
     if (uniqueIds.length > 0) {
       const shutdowns = await prismaClient.plannedShutdown.findMany({
@@ -957,7 +984,7 @@ mergedRows = liveRows.map((lr) => {
       }, {});
     }
 
-    // ✅ expand downtimeEntries: [{id}] -> [{...plannedShutdown}]
+    //  expand downtimeEntries: [{id}] -> [{...plannedShutdown}]
 const expandedRows = mergedRows.map((r) => {
   const entries = Array.isArray(r?.downtimeEntries) ? r.downtimeEntries : [];
   const expandedEntries = entries.map((e) => {
@@ -1500,18 +1527,27 @@ const plannedShutdowns = await prismaClient.plannedShutdown.findMany({
 //
 // ✅ convert plannedShutdowns into IST minute intervals
 //
-const plannedIntervals = mergeIntervals(
-  plannedShutdowns
-    .map((ps) => {
-      const st = toIstHHMM(ps.startTime);
-      const et = toIstHHMM(ps.endTime);
-      const startMin = hhmmToMin(st);
-      const endMin = hhmmToMin(et);
-      if (startMin == null || endMin == null) return null;
-      return { startMin, endMin };
-    })
-    .filter(Boolean)
-);
+const plannedIntervals = plannedShutdowns
+  .map((ps) => {
+    const st = toIstHHMM(ps.startTime);
+    const et = toIstHHMM(ps.endTime);
+    const startMin = hhmmToMin(st);
+    const endMin = hhmmToMin(et);
+    if (startMin == null || endMin == null) return null;
+
+    return {
+      id: ps.id,
+      type: ps.type,
+      reason: ps.reason || "Planned Shutdown",
+      description: ps.description || "Planned Shutdown",
+      startMin,
+      endMin,
+      startTime: st,
+      endTime: et,
+    };
+  })
+  .filter(Boolean)
+  .sort((a, b) => a.startMin - b.startMin);
 
 //
 // ✅ APPLY planned shutdown: split/delete overlapping and insert PlannedShutdown rows
@@ -1659,6 +1695,7 @@ module.exports = {
   createDowntimeReport,
   updateDowntimeReportById,
   getJPHReportRows,
+  buildLiveRowsForShift,
   updateDowntimeReportByLineDateShift,
 };
 
