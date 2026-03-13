@@ -226,7 +226,7 @@ model ProductionLossReasons{
 
 model PlannedShutdown{
   id             String @id @default(uuid())
-  name           String @unique
+  name           String 
   type           shutdownType 
   startTime      DateTime?
   endTime        DateTime?

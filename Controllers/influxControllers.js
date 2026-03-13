@@ -1166,40 +1166,40 @@ res.json({
 }
 
 
-const getPlantData=async(req,res)=>{
-const { shift, date } = req.params;
-const selectedDate = date ? new Date(date) : new Date();
+const getPlantData = async (req, res) => {
+  const { shift, date } = req.params;
+  const selectedDate = date ? new Date(date) : new Date();
 
-const { startTime, endTime } = getShiftTiming(shift, selectedDate);
-
-    if (!startTime || !endTime) {
-      throw new Error("Start time or end time is undefined.");
-    }
-
-let bucket=`SHIFT_${shift}`
-        if(shift==="r"){
-                bucket="TODAY";
-        }
-
-  const measurement='Performance'
-
-let fieldConditions=plantFields.map(f => `r._field == "${f}"`).join(" or ");
+  const { startTime, endTime } = getShiftTiming(shift, selectedDate);
+          const expectedLines = ["Front_Line", "RB", "RC"];
 
 
-console.time("queryTime1")
-const fluxQuery = `
+  if (!startTime || !endTime) {
+    throw new Error("Start time or end time is undefined.");
+  }
+
+  let bucket = `SHIFT_${shift}`;
+  if (shift === "r") {
+    bucket = "TODAY";
+  }
+
+  const filteredPlantFields = plantFields.filter((f) => f !== "OEE");
+  let fieldConditions = filteredPlantFields.map(f => `r._field == "${f}"`).join(" or ");
+
+  console.time("queryTime1");
+
+  const fluxQuery = `
 from(bucket: "${bucket}")
 |> range(start: time(v: "${startTime}"), stop: time(v: "${endTime}"))
-
-  |> filter(fn: (r) => r["_measurement"] == "Performance"  or r["_measurement"] == "QUALITY" )
-   |> filter(fn: (r) => r["LINE"] == "Front_Line" or r["LINE"] == "RB" or r["LINE"] == "RC")
-  |> filter(fn: (r) => ${fieldConditions})
-  |> aggregateWindow(every: 30s, fn: last, createEmpty: false)
-    |> sort(columns: ["_time"], desc: false)
+|> filter(fn: (r) => r["_measurement"] == "Performance" or r["_measurement"] == "QUALITY")
+|> filter(fn: (r) => r["LINE"] == "Front_Line" or r["LINE"] == "RB" or r["LINE"] == "RC")
+|> filter(fn: (r) => ${fieldConditions})
+|> aggregateWindow(every: 30s, fn: last, createEmpty: false)
+|> sort(columns: ["_time"], desc: false)
 `;
-    try{
 
-const results = [];
+  try {
+    const results = [];
     const queryStartTime = Date.now();
 
     await new Promise((resolve, reject) => {
@@ -1208,11 +1208,11 @@ const results = [];
           try {
             results.push(tableMeta.toObject(row));
           } catch (parseError) {
-            console.warn('Row parsing error:', parseError);
+            console.warn("Row parsing error:", parseError);
           }
         },
         error(error) {
-          console.error('Query execution error:', error);
+          console.error("Query execution error:", error);
           reject(error);
         },
         complete() {
@@ -1222,299 +1222,297 @@ const results = [];
       });
     });
 
-        console.timeEnd("queryTime1");
-        function humanReadableTime(isoString) {
-      const date = parseISO(isoString);
-       return format(date, "hh:mm:ss a");
-     }
-      const resultsFinal=results.reduce((acc, item) => {
-  acc[item._field] = item._value;
-  return acc;
-}, {});
 
-const groupData = {};
-const finalData = {
-  totalProductionInSets:{},
-  oeeLatestValues: {},
-  qualityLatestValues: {},
-  Performance: {},
-  QUALITY: {},
-  targetProdLatestValues: {},
-  todayProduced: {},
-  pphValues:{}
-};
+    console.timeEnd("queryTime1");
 
-const lastKnownValues = {}; // 🆕 Track last known values per field per line
+    const groupData = {};
+    const finalData = {
+      totalProductionInSets: {},
+      oeeLatestValues: {},
+      qualityLatestValues: {},
+      Performance: {},
+      QUALITY: {},
+      targetProdLatestValues: {},
+      todayProduced: {},
+      pphValues: {}
+    };
 
-// Process all records
-results.forEach(({ _measurement, _field, _value, _time, LINE }) => {
-  const date = new Date(_time);
-  const hhmm=format(new Date(_time), 'HH:mm')
+    const lastKnownValues = {};
 
-  if (!groupData[_measurement]) groupData[_measurement] = {};
-  if (!groupData[_measurement][_field]) groupData[_measurement][_field] = {};
+    results.forEach(({ _measurement, _field, _value, _time, LINE }) => {
+      const date = new Date(_time);
+      const hhmm = format(new Date(_time), "HH:mm");
 
-  if (_measurement === "QUALITY") {
-    if (!groupData[_measurement][_field][LINE]) {
-      groupData[_measurement][_field][LINE] = [];
-    }
-    groupData[_measurement][_field][LINE].push({
-      time: hhmm,
-      value: _value,
-      timestamp: date.getTime()
-    });
+      if (!groupData[_measurement]) groupData[_measurement] = {};
+      if (!groupData[_measurement][_field]) groupData[_measurement][_field] = {};
 
-    if (!groupData[_measurement][_field][hhmm]) {
-      groupData[_measurement][_field][hhmm] = [];
-    }
-    groupData[_measurement][_field][hhmm].push({
-      time: hhmm,
-      value: _value,
-      line: LINE
-    });
+      if (_measurement === "QUALITY") {
+        if (!groupData[_measurement][_field][LINE]) {
+          groupData[_measurement][_field][LINE] = [];
+        }
 
-  } else if (_measurement === "Performance") {
-    if (_field === "OEE" || _field === "Today_planned_Prod" || _field === "pph") {
-      if (!groupData[_measurement][_field][LINE]) {
-        groupData[_measurement][_field][LINE] = [];
-      }
-      groupData[_measurement][_field][LINE].push({
-        time: hhmm,
-        value: _value,
-        timestamp: date.getTime()
-      });
-    }
-
-    const isAverageField = ["Avail", "OEE", "Productivity", "Quality"].includes(_field);
-    if (!groupData[_measurement][_field][hhmm]) {
-      groupData[_measurement][_field][hhmm] = {
-        lineValues: {},
-        isAverageField
-      };
-    }
-
-    const allowedLines = new Set(['Front_Line', 'RB', 'RC']);
-    const lineKey = LINE?.trim();
-
-    if (allowedLines.has(lineKey)) {
-      // Track last known value per field and line
-      if (!lastKnownValues[_field]) lastKnownValues[_field] = {};
-      lastKnownValues[_field][lineKey] = _value;
-
-      // Store per-line value in this time bucket
-      groupData[_measurement][_field][hhmm].lineValues[lineKey] = _value;
-    }
-  }
-});
-
-// QUALITY
-Object.keys(groupData.QUALITY || {}).forEach(field => {
-  finalData.QUALITY[field] = [];
-  finalData.qualityLatestValues[field] = {};
-
-  Object.keys(groupData.QUALITY[field]).forEach(key => {
-    if (!/^\d{2}:\d{2}$/.test(key)) {
-      const lineData = groupData.QUALITY[field][key];
-      if (Array.isArray(lineData) && lineData.length > 0) {
-        const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
-        finalData.qualityLatestValues[field][key] = {
-          lastEntry: {
-            time: sorted[0].time,
-            value: sorted[0].value
-          }
-        };
-      }
-    }
-
-    if (/^\d{2}:\d{2}$/.test(key)) {
-      groupData.QUALITY[field][key].forEach(entry => {
-        finalData.QUALITY[field].push({
-          time: entry.time,
-          value: entry.value,
-          line: entry.line
+        groupData[_measurement][_field][LINE].push({
+          time: hhmm,
+          value: _value,
+          timestamp: date.getTime()
         });
-      });
-    }
-  });
-});
 
-// Performance
-Object.keys(groupData.Performance || {}).forEach(field => {
+        if (!groupData[_measurement][_field][hhmm]) {
+          groupData[_measurement][_field][hhmm] = [];
+        }
 
-  if (field === "OEE") {
-    finalData.oeeLatestValues = {};
-    Object.keys(groupData.Performance[field]).forEach(key => {
-      if (!/^\d{2}:\d{2}$/.test(key)) {
-        const lineData = groupData.Performance[field][key];
-        if (Array.isArray(lineData) && lineData.length > 0) {
-          const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
-          finalData.oeeLatestValues[key] = {
-            lastEntry: {
-              time: sorted[0].time,
-              value: sorted[0].value
-            }
+        groupData[_measurement][_field][hhmm].push({
+          time: hhmm,
+          value: _value,
+          line: LINE
+        });
+      } else if (_measurement === "Performance") {
+        if (_field === "Today_planned_Prod" || _field === "pph") {
+          if (!groupData[_measurement][_field][LINE]) {
+            groupData[_measurement][_field][LINE] = [];
+          }
+
+          groupData[_measurement][_field][LINE].push({
+            time: hhmm,
+            value: _value,
+            timestamp: date.getTime()
+          });
+        }
+
+        const isAverageField = ["Avail", "Productivity", "Quality"].includes(_field);
+
+        if (!groupData[_measurement][_field][hhmm]) {
+          groupData[_measurement][_field][hhmm] = {
+            lineValues: {},
+            isAverageField
           };
+        }
+
+        const allowedLines = new Set(["Front_Line", "RB", "RC"]);
+        const lineKey = LINE?.trim();
+
+        if (allowedLines.has(lineKey)) {
+          if (!lastKnownValues[_field]) lastKnownValues[_field] = {};
+          lastKnownValues[_field][lineKey] = _value;
+          groupData[_measurement][_field][hhmm].lineValues[lineKey] = _value;
         }
       }
     });
-  }
 
-  if (field === "pph") {
-    finalData.pphValues= {};
-    Object.keys(groupData.Performance[field]).forEach(key => {
-      if (!/^\d{2}:\d{2}$/.test(key)) {
-        const lineData = groupData.Performance[field][key];
-        if (Array.isArray(lineData) && lineData.length > 0) {
-          const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
-          finalData.pphValues[key] = {
-            lastEntry: {
-              time: sorted[0].time,
-              value: sorted[0].value
-            }
-          };
-        }
-      }
-    });
-  }
+    Object.keys(groupData.QUALITY || {}).forEach(field => {
+      finalData.QUALITY[field] = [];
+      finalData.qualityLatestValues[field] = {};
 
-
-if (field === "total_production_set") {
-  finalData.totalProductionInSets = {}; // match desired output key
-
-  const entries = Object.entries(groupData.Performance[field]);
-
-  entries.sort((a, b) => {
-    // Sort by timestamp string (e.g., "16:02") descending
-    return b[0].localeCompare(a[0]);
-  });
-
-  for (const [time, data] of entries) {
-    const lineValues = data.lineValues;
-
-    Object.entries(lineValues).forEach(([line, value]) => {
-      // Only set if not already set (i.e., we want the latest value)
-      if (!finalData.totalProductionInSets[line]) {
-        finalData.totalProductionInSets[line] = {
-          lastEntry: {
-            time,
-            value,
-          },
-        };
-      }
-    });
-  }
-}
-
-
-//entries.sort((a, b) => {
-    // Sort by timestamp string (e.g., "16:02") descending
-  //  return b[0].localeCompare(a[0]);
- // });
-
-  if (field === "Today_planned_Prod") {
-    finalData.todayProduced = {};
-    Object.keys(groupData.Performance[field]).forEach(key => {
-      if (!/^\d{2}:\d{2}$/.test(key)) {
-        const lineData = groupData.Performance[field][key];
-        if (Array.isArray(lineData) && lineData.length > 0) {
-          const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
-          finalData.todayProduced[key] = {
-            lastEntry: {
-              time: sorted[0].time,
-              value: sorted[0].value
-            }
-          };
-        }
-      }
-    });
-  }
-finalData.Performance[field] = Object.entries(groupData.Performance[field])
-    .filter(([key]) => /^\d{2}:\d{2}$/.test(key))
-    .map(([time, data]) => {
-        // Skip processing for HRP fields - return raw data
-        if (field.startsWith('HRP') || field === "total_production_set") {
-            return {
-                time,
-                value: data.lineValues // Return the raw lineValues object
+      Object.keys(groupData.QUALITY[field]).forEach(key => {
+        if (!/^\d{2}:\d{2}$/.test(key)) {
+          const lineData = groupData.QUALITY[field][key];
+          if (Array.isArray(lineData) && lineData.length > 0) {
+            const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
+            finalData.qualityLatestValues[field][key] = {
+              lastEntry: {
+                time: sorted[0].time,
+                value: sorted[0].value
+              }
             };
+          }
         }
 
-        const expectedLines = ['Front_Line', 'RB', 'RC'];
-        let total = 0;
-        let count = 0;
+        if (/^\d{2}:\d{2}$/.test(key)) {
+          groupData.QUALITY[field][key].forEach(entry => {
+            finalData.QUALITY[field].push({
+              time: entry.time,
+              value: entry.value,
+              line: entry.line
+            });
+          });
+        }
+      });
+    });
 
-        expectedLines.forEach(line => {
+    Object.keys(groupData.Performance || {}).forEach(field => {
+      if (field === "pph") {
+        finalData.pphValues = {};
+        Object.keys(groupData.Performance[field]).forEach(key => {
+          if (!/^\d{2}:\d{2}$/.test(key)) {
+            const lineData = groupData.Performance[field][key];
+            if (Array.isArray(lineData) && lineData.length > 0) {
+              const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
+              finalData.pphValues[key] = {
+                lastEntry: {
+                  time: sorted[0].time,
+                  value: sorted[0].value
+                }
+              };
+            }
+          }
+        });
+      }
+
+      if (field === "total_production_set") {
+        finalData.totalProductionInSets = {};
+
+        const entries = Object.entries(groupData.Performance[field]);
+
+        entries.sort((a, b) => {
+          return b[0].localeCompare(a[0]);
+        });
+
+        for (const [time, data] of entries) {
+          const lineValues = data.lineValues;
+
+          Object.entries(lineValues).forEach(([line, value]) => {
+            if (!finalData.totalProductionInSets[line]) {
+              finalData.totalProductionInSets[line] = {
+                lastEntry: {
+                  time,
+                  value,
+                },
+              };
+            }
+          });
+        }
+      }
+
+      if (field === "Today_planned_Prod") {
+        finalData.todayProduced = {};
+        Object.keys(groupData.Performance[field]).forEach(key => {
+          if (!/^\d{2}:\d{2}$/.test(key)) {
+            const lineData = groupData.Performance[field][key];
+            if (Array.isArray(lineData) && lineData.length > 0) {
+              const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
+              finalData.todayProduced[key] = {
+                lastEntry: {
+                  time: sorted[0].time,
+                  value: sorted[0].value
+                }
+              };
+            }
+          }
+        });
+      }
+
+      finalData.Performance[field] = Object.entries(groupData.Performance[field])
+        .filter(([key]) => /^\d{2}:\d{2}$/.test(key))
+        .map(([time, data]) => {
+          if (field.startsWith("HRP") || field === "total_production_set") {
+            return {
+              time,
+              value: data.lineValues
+            };
+          }
+
+          let total = 0;
+          let count = 0;
+
+          expectedLines.forEach(line => {
             const value = data.lineValues[line] ?? lastKnownValues[field]?.[line];
             if (value !== undefined) {
-                total += value;
-                count++;
+              total += value;
+              count++;
             }
-        });
+          });
 
-        return {
+          return {
             time,
             value: data.isAverageField
-                ? (count > 0 ? total / count : 0)
-                : total
-        };
-    })
-    .sort((a, b) => {
-        // Skip sorting for HRP fields
-        if (field.startsWith('HRP')) return 0;
-        
-        const [aHours, aMinutes] = a.time.split(':').map(Number);
-        const [bHours, bMinutes] = b.time.split(':').map(Number);
-        
-        // Check if times are in night period (23:00-05:59)
-        const aIsNight = aHours >= 23 || aHours < 6;
-        const bIsNight = bHours >= 23 || bHours < 6;
-        
-        // Both are night hours
-        if (aIsNight && bIsNight) {
-            // Convert 0-5 to 24-29 for proper ordering (23, 24, 25, 26, 27, 28)
+              ? (count > 0 ? total / count : 0)
+              : total
+          };
+        })
+        .sort((a, b) => {
+          if (field.startsWith("HRP")) return 0;
+
+          const [aHours, aMinutes] = a.time.split(":").map(Number);
+          const [bHours, bMinutes] = b.time.split(":").map(Number);
+
+          const aIsNight = aHours >= 23 || aHours < 6;
+          const bIsNight = bHours >= 23 || bHours < 6;
+
+          if (aIsNight && bIsNight) {
             const aAdj = aHours < 6 ? aHours + 24 : aHours;
             const bAdj = bHours < 6 ? bHours + 24 : bHours;
             return aAdj - bAdj || aMinutes - bMinutes;
-        }
-        
-        // Only 'a' is night time - it should come first
-        if (aIsNight) return -1;
-        
-        // Only 'b' is night time - it should come first
-        if (bIsNight) return 1;
-        
-        // Neither is night time - normal comparison
-        return aHours - bHours || aMinutes - bMinutes;
+          }
+
+          if (aIsNight) return -1;
+          if (bIsNight) return 1;
+
+          return aHours - bHours || aMinutes - bMinutes;
+        });
     });
 
-})
-let chartData=finalData.Performance;
-const data3 = {
-  OEE: chartData.OEE,
-  Productivity: chartData.Productivity,
-  Quality: chartData.Quality,
-  Avail: chartData.Avail
-};
+const availSeries = finalData.Performance.Avail || [];
+const productivitySeries = finalData.Performance.Productivity || [];
+const qualitySeries = finalData.Performance.Quality || [];
 
-return res.json({
-    success: true,
-    data: finalData.pphValues,
-    dataprod: finalData.todayProduced,
-    data2: finalData.oeeLatestValues,
-    data3: data3,
-    hpcData: extractHPCData(finalData.Performance, bucket),
-    data4: finalData.qualityLatestValues,
-    data5: finalData.totalProductionInSets
+const productivityMap = new Map(
+  productivitySeries.map(item => [item.time, Number(item.value)])
+);
+
+const qualityMap = new Map(
+  qualitySeries.map(item => [item.time, Number(item.value)])
+);
+
+finalData.Performance.OEE = availSeries.map((availPoint) => {
+  const time = availPoint.time;
+  const avgAvail = Number(availPoint.value);
+  const avgProductivity = productivityMap.get(time);
+  const avgQuality = qualityMap.get(time);
+
+  const hasAllValues =
+    !Number.isNaN(avgAvail) &&
+    avgProductivity !== undefined &&
+    !Number.isNaN(avgProductivity) &&
+    avgQuality !== undefined &&
+    !Number.isNaN(avgQuality);
+
+  return {
+    time,
+    value: hasAllValues
+      ? (avgAvail * avgProductivity * avgQuality) / 10000
+      : 0
+  };
 });
-}catch(e){
-  console.log(e)
- return  res.json({
-    error:e,
-    message:"Failed to fetch line dashboard data"
-  })
-}
 
-}
+const latestPlantOee =
+  finalData.Performance.OEE.length > 0
+    ? finalData.Performance.OEE[finalData.Performance.OEE.length - 1]
+    : null;
+
+finalData.oeeLatestValues = latestPlantOee
+  ? {
+      plant: {
+        lastEntry: latestPlantOee
+      }
+    }
+  : {};
+
+    let chartData = finalData.Performance;
+    const data3 = {
+      OEE: chartData.OEE,
+      Productivity: chartData.Productivity,
+      Quality: chartData.Quality,
+      Avail: chartData.Avail
+    };
+
+    return res.json({
+      success: true,
+      data: finalData.pphValues,
+      dataprod: finalData.todayProduced,
+      data2: finalData.oeeLatestValues,
+      data3: data3,
+      hpcData: extractHPCData(finalData.Performance, bucket),
+      data4: finalData.qualityLatestValues,
+      data5: finalData.totalProductionInSets
+    });
+  } catch (e) {
+    console.log(e);
+    return res.json({
+      error: e,
+      message: "Failed to fetch line dashboard data"
+    });
+  }
+};
 
 
 const getCeoSeatProductionData=async(req,res)=>{

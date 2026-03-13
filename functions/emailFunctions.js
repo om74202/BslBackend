@@ -592,10 +592,10 @@ const checkRunModeAndSendAlerts = async () => {
     console.log("Email sent for not in realtime Data ");
     return;
   } else {
-    if (isEmailSent && checkLast5MinutesData(rowsDirect)) {
-      console.log("just powered up email sent for power up nuc or restored connection ");
-      return;
-    }
+    if (isEmailSent && await checkLast5MinutesData(rowsDirect)) {
+  console.log("just powered up email sent for power up nuc or restored connection ");
+  return;
+}
 
     if (TagsSyncStatus(getLatestStatus(rows), getLatestStatus(rowsDirect)) === true) {
       console.log("email for not time sync for all 3 lines ");
