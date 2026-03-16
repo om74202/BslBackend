@@ -1219,10 +1219,9 @@ from(bucket: "${bucket}")
         complete() {
           console.log(`Query completed in ${Date.now() - queryStartTime}ms`);
           resolve();
-        }
+        },
       });
     });
-
 
     console.timeEnd("queryTime1");
 
@@ -1235,17 +1234,24 @@ from(bucket: "${bucket}")
       QUALITY: {},
       targetProdLatestValues: {},
       todayProduced: {},
-      pphValues: {}
+      pphValues: {},
     };
 
     const lastKnownValues = {};
+    //for latest oee calculations
+    const latestLineMetrics = {
+      Avail: {},
+      Productivity: {},
+      Quality: {},
+    };
 
     results.forEach(({ _measurement, _field, _value, _time, LINE }) => {
       const date = new Date(_time);
       const hhmm = format(new Date(_time), "HH:mm");
 
       if (!groupData[_measurement]) groupData[_measurement] = {};
-      if (!groupData[_measurement][_field]) groupData[_measurement][_field] = {};
+      if (!groupData[_measurement][_field])
+        groupData[_measurement][_field] = {};
 
       if (_measurement === "QUALITY") {
         if (!groupData[_measurement][_field][LINE]) {
@@ -1255,7 +1261,7 @@ from(bucket: "${bucket}")
         groupData[_measurement][_field][LINE].push({
           time: hhmm,
           value: _value,
-          timestamp: date.getTime()
+          timestamp: date.getTime(),
         });
 
         if (!groupData[_measurement][_field][hhmm]) {
@@ -1265,7 +1271,7 @@ from(bucket: "${bucket}")
         groupData[_measurement][_field][hhmm].push({
           time: hhmm,
           value: _value,
-          line: LINE
+          line: LINE,
         });
       } else if (_measurement === "Performance") {
         if (_field === "Today_planned_Prod" || _field === "pph") {
@@ -1276,16 +1282,18 @@ from(bucket: "${bucket}")
           groupData[_measurement][_field][LINE].push({
             time: hhmm,
             value: _value,
-            timestamp: date.getTime()
+            timestamp: date.getTime(),
           });
         }
 
-        const isAverageField = ["Avail", "Productivity", "Quality"].includes(_field);
+        const isAverageField = ["Avail", "Productivity", "Quality"].includes(
+          _field,
+        );
 
         if (!groupData[_measurement][_field][hhmm]) {
           groupData[_measurement][_field][hhmm] = {
             lineValues: {},
-            isAverageField
+            isAverageField,
           };
         }
 
@@ -1293,56 +1301,70 @@ from(bucket: "${bucket}")
         const lineKey = LINE?.trim();
 
         if (allowedLines.has(lineKey)) {
-          if (!lastKnownValues[_field]) lastKnownValues[_field] = {};
-          lastKnownValues[_field][lineKey] = _value;
-          groupData[_measurement][_field][hhmm].lineValues[lineKey] = _value;
+          if (_value !== null && _value !== undefined) {
+            if (!lastKnownValues[_field]) lastKnownValues[_field] = {};
+            lastKnownValues[_field][lineKey] = _value;
+            groupData[_measurement][_field][hhmm].lineValues[lineKey] = _value;
+
+            if (["Avail", "Productivity", "Quality"].includes(_field)) {
+              latestLineMetrics[_field][lineKey] = {
+                time: hhmm,
+                value: Number(_value),
+                timestamp: date.getTime(),
+              };
+            }
+          }
         }
       }
     });
 
-    Object.keys(groupData.QUALITY || {}).forEach(field => {
+    Object.keys(groupData.QUALITY || {}).forEach((field) => {
       finalData.QUALITY[field] = [];
       finalData.qualityLatestValues[field] = {};
 
-      Object.keys(groupData.QUALITY[field]).forEach(key => {
+      Object.keys(groupData.QUALITY[field]).forEach((key) => {
         if (!/^\d{2}:\d{2}$/.test(key)) {
           const lineData = groupData.QUALITY[field][key];
           if (Array.isArray(lineData) && lineData.length > 0) {
-            const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
+            const sorted = [...lineData].sort(
+              (a, b) => b.timestamp - a.timestamp,
+            );
             finalData.qualityLatestValues[field][key] = {
               lastEntry: {
                 time: sorted[0].time,
-                value: sorted[0].value
-              }
+                value: sorted[0].value,
+              },
             };
           }
         }
 
         if (/^\d{2}:\d{2}$/.test(key)) {
-          groupData.QUALITY[field][key].forEach(entry => {
+          groupData.QUALITY[field][key].forEach((entry) => {
             finalData.QUALITY[field].push({
               time: entry.time,
               value: entry.value,
-              line: entry.line
+              line: entry.line,
             });
           });
         }
       });
     });
 
-    Object.keys(groupData.Performance || {}).forEach(field => {
+    Object.keys(groupData.Performance || {}).forEach((field) => {
       if (field === "pph") {
         finalData.pphValues = {};
-        Object.keys(groupData.Performance[field]).forEach(key => {
+        Object.keys(groupData.Performance[field]).forEach((key) => {
           if (!/^\d{2}:\d{2}$/.test(key)) {
             const lineData = groupData.Performance[field][key];
             if (Array.isArray(lineData) && lineData.length > 0) {
-              const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
+              const sorted = [...lineData].sort(
+                (a, b) => b.timestamp - a.timestamp,
+              );
               finalData.pphValues[key] = {
                 lastEntry: {
                   time: sorted[0].time,
-                  value: sorted[0].value
-                }
+                  value: sorted[0].value,
+                },
               };
             }
           }
@@ -1376,37 +1398,42 @@ from(bucket: "${bucket}")
 
       if (field === "Today_planned_Prod") {
         finalData.todayProduced = {};
-        Object.keys(groupData.Performance[field]).forEach(key => {
+        Object.keys(groupData.Performance[field]).forEach((key) => {
           if (!/^\d{2}:\d{2}$/.test(key)) {
             const lineData = groupData.Performance[field][key];
             if (Array.isArray(lineData) && lineData.length > 0) {
-              const sorted = [...lineData].sort((a, b) => b.timestamp - a.timestamp);
+              const sorted = [...lineData].sort(
+                (a, b) => b.timestamp - a.timestamp,
+              );
               finalData.todayProduced[key] = {
                 lastEntry: {
                   time: sorted[0].time,
-                  value: sorted[0].value
-                }
+                  value: sorted[0].value,
+                },
               };
             }
           }
         });
       }
 
-      finalData.Performance[field] = Object.entries(groupData.Performance[field])
+      finalData.Performance[field] = Object.entries(
+        groupData.Performance[field],
+      )
         .filter(([key]) => /^\d{2}:\d{2}$/.test(key))
         .map(([time, data]) => {
           if (field.startsWith("HRP") || field === "total_production_set") {
             return {
               time,
-              value: data.lineValues
+              value: data.lineValues,
             };
           }
 
           let total = 0;
           let count = 0;
 
-          expectedLines.forEach(line => {
-            const value = data.lineValues[line] ?? lastKnownValues[field]?.[line];
+          expectedLines.forEach((line) => {
+            const value =
+              data.lineValues[line] ?? lastKnownValues[field]?.[line];
             if (value !== undefined) {
               total += value;
               count++;
@@ -1416,8 +1443,10 @@ from(bucket: "${bucket}")
           return {
             time,
             value: data.isAverageField
-              ? (count > 0 ? total / count : 0)
-              : total
+              ? count > 0
+                ? total / count
+                : 0
+              : total,
           };
         })
         .sort((a, b) => {
@@ -1442,58 +1471,104 @@ from(bucket: "${bucket}")
         });
     });
 
-const availSeries = finalData.Performance.Avail || [];
-const productivitySeries = finalData.Performance.Productivity || [];
-const qualitySeries = finalData.Performance.Quality || [];
+    const availSeries = finalData.Performance.Avail || [];
+    const productivitySeries = finalData.Performance.Productivity || [];
+    const qualitySeries = finalData.Performance.Quality || [];
 
-const productivityMap = new Map(
-  productivitySeries.map(item => [item.time, Number(item.value)])
-);
+    const productivityMap = new Map(
+      productivitySeries.map((item) => [item.time, Number(item.value)]),
+    );
 
-const qualityMap = new Map(
-  qualitySeries.map(item => [item.time, Number(item.value)])
-);
+    const qualityMap = new Map(
+      qualitySeries.map((item) => [item.time, Number(item.value)]),
+    );
 
-finalData.Performance.OEE = availSeries.map((availPoint) => {
-  const time = availPoint.time;
-  const avgAvail = Number(availPoint.value);
-  const avgProductivity = productivityMap.get(time);
-  const avgQuality = qualityMap.get(time);
+    finalData.Performance.OEE = availSeries.map((availPoint) => {
+      const time = availPoint.time;
+      const avgAvail = Number(availPoint.value);
+      const avgProductivity = productivityMap.get(time);
+      const avgQuality = qualityMap.get(time);
+
+      const hasAllValues =
+        !Number.isNaN(avgAvail) &&
+        avgProductivity !== undefined &&
+        !Number.isNaN(avgProductivity) &&
+        avgQuality !== undefined &&
+        !Number.isNaN(avgQuality);
+
+      return {
+        time,
+        value: hasAllValues
+          ? (avgAvail * avgProductivity * avgQuality) / 10000
+          : 0,
+      };
+    });
+
+finalData.oeeLatestValues = {};
+
+let plantTotalOee = 0;
+let plantCountOee = 0;
+
+expectedLines.forEach((line) => {
+  const availEntry = latestLineMetrics.Avail[line];
+  const productivityEntry = latestLineMetrics.Productivity[line];
+  const qualityEntry = latestLineMetrics.Quality[line];
+
+  const avail = availEntry?.value;
+  const productivity = productivityEntry?.value;
+  const quality = qualityEntry?.value;
 
   const hasAllValues =
-    !Number.isNaN(avgAvail) &&
-    avgProductivity !== undefined &&
-    !Number.isNaN(avgProductivity) &&
-    avgQuality !== undefined &&
-    !Number.isNaN(avgQuality);
+    avail !== undefined &&
+    productivity !== undefined &&
+    quality !== undefined &&
+    avail !== null &&
+    productivity !== null &&
+    quality !== null;
 
-  return {
-    time,
-    value: hasAllValues
-      ? (avgAvail * avgProductivity * avgQuality) / 10000
-      : 0
+  const lineOee = hasAllValues
+    ? (Number(avail) * Number(productivity) * Number(quality)) / 10000
+    : 0;
+
+  const latestTimestamp = Math.max(
+    availEntry?.timestamp || 0,
+    productivityEntry?.timestamp || 0,
+    qualityEntry?.timestamp || 0,
+  );
+
+  const latestTime =
+    latestTimestamp > 0 ? format(new Date(latestTimestamp), "HH:mm") : null;
+
+  finalData.oeeLatestValues[line] = {
+    lastEntry: {
+      time: latestTime,
+      value: lineOee,
+    },
   };
+
+  if (hasAllValues) {
+    plantTotalOee += lineOee;
+    plantCountOee++;
+  }
 });
 
-const latestPlantOee =
-  finalData.Performance.OEE.length > 0
-    ? finalData.Performance.OEE[finalData.Performance.OEE.length - 1]
-    : null;
-
-finalData.oeeLatestValues = latestPlantOee
-  ? {
-      plant: {
-        lastEntry: latestPlantOee
-      }
-    }
-  : {};
+finalData.oeeLatestValues.plant = {
+  lastEntry: {
+    time:
+      finalData.oeeLatestValues.Front_Line?.lastEntry?.time ||
+      finalData.oeeLatestValues.RB?.lastEntry?.time ||
+      finalData.oeeLatestValues.RC?.lastEntry?.time ||
+      null,
+    value: plantCountOee > 0 ? plantTotalOee / plantCountOee : 0,
+  },
+};
 
     let chartData = finalData.Performance;
     const data3 = {
       OEE: chartData.OEE,
       Productivity: chartData.Productivity,
       Quality: chartData.Quality,
-      Avail: chartData.Avail
+      Avail: chartData.Avail,
     };
 
     return res.json({
@@ -1504,7 +1579,7 @@ finalData.oeeLatestValues = latestPlantOee
       data3: data3,
       hpcData: extractHPCData(finalData.Performance, bucket),
       data4: finalData.qualityLatestValues,
-      data5: finalData.totalProductionInSets
+      data5: finalData.totalProductionInSets,
     });
   } catch (e) {
     console.log(e);
