@@ -790,7 +790,34 @@ const parseYMD = (ymd) => {
 
   return dt;
 };
+const clampInterval = (aStart, aEnd, rangeStart, rangeEnd) => {
+  const s = Math.max(new Date(aStart).getTime(), rangeStart.getTime());
+  const e = Math.min(new Date(aEnd).getTime(), rangeEnd.getTime());
+  return s < e ? [s, e] : null;
+};
 
+const mergeIntervals = (intervals) => {
+  if (!intervals.length) return [];
+
+  intervals.sort((a, b) => a[0] - b[0]);
+  const merged = [intervals[0]];
+
+  for (let i = 1; i < intervals.length; i++) {
+    const [curStart, curEnd] = intervals[i];
+    const last = merged[merged.length - 1];
+
+    if (curStart <= last[1]) {
+      last[1] = Math.max(last[1], curEnd);
+    } else {
+      merged.push([curStart, curEnd]);
+    }
+  }
+
+  return merged;
+};
+
+const sumMinutes = (intervals) =>
+  intervals.reduce((sum, [s, e]) => sum + Math.round((e - s) / 60000), 0);
 
 // GET /api/downtime/pie?lineId=...&date=YYYY-MM-DD&shift=A
 // (or shift=B/C/r)
@@ -799,43 +826,34 @@ const getPlannedVsUnplannedMinutes = async (req, res) => {
   try {
     const { lineName, date, shift } = req.query;
 
-    if (!lineName ||  !date || !shift) {
+    if (!lineName || !date || !shift) {
       return res.status(400).json({
         success: false,
-        message: "lineId, date(YYYY-MM-DD), shift are required",
+        message: "lineName, date(YYYY-MM-DD), shift are required",
       });
     }
-    const line= await prismaClient.line.findFirst({
-      where:{lineName},
-      select:{lineId:true,lineName:true}
-    })
-    if(!line){
+
+    const line = await prismaClient.line.findFirst({
+      where: { lineName },
+      select: { lineId: true, lineName: true },
+    });
+
+    if (!line) {
       return res.status(404).json({
         success: false,
         message: "Line not found",
       });
     }
-    const lineId=line.lineId
 
-    const selectedDate = parseYMD(date); // use your existing parseYMD helper
+    const selectedDate = parseYMD(date);
     if (!selectedDate) {
       return res.status(400).json({
         success: false,
         message: "Invalid date format. Expected YYYY-MM-DD",
       });
     }
-    const shiftTimingFn =getShiftTiming
 
-    if (typeof shiftTimingFn !== "function") {
-      return res.status(500).json({
-        success: false,
-        message: "Shift timing helper unavailable",
-      });
-    }
-
-    const shiftVal = shift // use your existing normalizeShift helper (A/B/C/r)
-    const { startTime, endTime } = shiftTimingFn(shift, selectedDate);
-
+    const { startTime, endTime } = getShiftTiming(shift, selectedDate);
 
     if (!startTime || !endTime) {
       return res.status(400).json({
@@ -844,62 +862,199 @@ const getPlannedVsUnplannedMinutes = async (req, res) => {
       });
     }
 
-    const start = new Date(startTime);
-    const end = new Date(endTime);
+    const shiftStart = new Date(startTime);
+    const shiftEnd = new Date(endTime);
 
-    // clamp overlap minutes for any record interval with [start,end]
-    const overlapMins = (aStart, aEnd) => {
-      if (!aStart || !aEnd) return 0;
-      const s = Math.max(new Date(aStart).getTime(), start.getTime());
-      const e = Math.min(new Date(aEnd).getTime(), end.getTime());
-      return Math.max(0, Math.round((e - s) / 60000));
-    };
-
-    // ✅ Get both types, overlap-safe (not createdAt-based)
     const rows = await prismaClient.plannedShutdown.findMany({
       where: {
-        lines: { some: { lineId } },
+        lines: { some: { lineId: line.lineId } },
         type: { in: ["PlannedShutdown", "UnplannedDowntime"] },
-        AND: [
-          { startTime: { lt: end } },
-          { endTime: { gt: start } },
-        ],
-      },
-      select: {
-        id: true,
-        type: true,
-        startTime: true,
-        endTime: true,
+        AND: [{ startTime: { lt: shiftEnd } }, { endTime: { gt: shiftStart } }],
       },
     });
 
-    let plannedMinutes = 0;
-    let unplannedMinutes = 0;
+    const clampInterval = (aStart, aEnd, rangeStart, rangeEnd) => {
+      const s = Math.max(new Date(aStart).getTime(), rangeStart.getTime());
+      const e = Math.min(new Date(aEnd).getTime(), rangeEnd.getTime());
+      return s < e ? [s, e] : null;
+    };
+
+    const mergeIntervals = (intervals) => {
+      if (!intervals.length) return [];
+
+      intervals.sort((a, b) => a[0] - b[0]);
+      const merged = [intervals[0].slice()];
+
+      for (let i = 1; i < intervals.length; i++) {
+        const [s, e] = intervals[i];
+        const last = merged[merged.length - 1];
+
+        if (s <= last[1]) {
+          last[1] = Math.max(last[1], e);
+        } else {
+          merged.push([s, e]);
+        }
+      }
+
+      return merged;
+    };
+
+    const sumMinutes = (intervals) =>
+      intervals.reduce((sum, [s, e]) => sum + Math.round((e - s) / 60000), 0);
+
+    const startOfUtcDay = (d) =>
+      new Date(
+        Date.UTC(
+          d.getUTCFullYear(),
+          d.getUTCMonth(),
+          d.getUTCDate(),
+          0,
+          0,
+          0,
+          0,
+        ),
+      );
+
+    const endOfUtcDay = (d) =>
+      new Date(
+        Date.UTC(
+          d.getUTCFullYear(),
+          d.getUTCMonth(),
+          d.getUTCDate(),
+          23,
+          59,
+          59,
+          999,
+        ),
+      );
+
+    const addUtcDays = (d, days) =>
+      new Date(
+        Date.UTC(
+          d.getUTCFullYear(),
+          d.getUTCMonth(),
+          d.getUTCDate() + days,
+          d.getUTCHours(),
+          d.getUTCMinutes(),
+          d.getUTCSeconds(),
+          d.getUTCMilliseconds(),
+        ),
+      );
+
+    const sameUtcDate = (a, b) =>
+      a.getUTCFullYear() === b.getUTCFullYear() &&
+      a.getUTCMonth() === b.getUTCMonth() &&
+      a.getUTCDate() === b.getUTCDate();
+
+    const buildDateWithUtcTime = (baseDate, sourceTime) =>
+      new Date(
+        Date.UTC(
+          baseDate.getUTCFullYear(),
+          baseDate.getUTCMonth(),
+          baseDate.getUTCDate(),
+          sourceTime.getUTCHours(),
+          sourceTime.getUTCMinutes(),
+          sourceTime.getUTCSeconds(),
+          sourceTime.getUTCMilliseconds(),
+        ),
+      );
+
+    const splitPlannedShutdownDaily = (rowStart, rowEnd) => {
+      const start = new Date(rowStart);
+      const end = new Date(rowEnd);
+
+      if (!(start < end)) return [];
+
+      // same day => normal interval
+      if (sameUtcDate(start, end)) {
+        return [[start.getTime(), end.getTime()]];
+      }
+
+      const result = [];
+      let cursorDay = startOfUtcDay(start);
+      const lastDay = startOfUtcDay(end);
+
+      while (cursorDay <= lastDay) {
+        let intervalStart;
+        let intervalEnd;
+
+        if (sameUtcDate(cursorDay, start)) {
+          intervalStart = start;
+        } else {
+          intervalStart = buildDateWithUtcTime(cursorDay, start);
+        }
+
+        if (sameUtcDate(cursorDay, end)) {
+          intervalEnd = end;
+        } else {
+          intervalEnd = buildDateWithUtcTime(cursorDay, end);
+        }
+
+        // overnight daily window case
+        if (intervalEnd <= intervalStart) {
+          intervalEnd = addUtcDays(intervalEnd, 1);
+        }
+
+        result.push([intervalStart.getTime(), intervalEnd.getTime()]);
+        cursorDay = addUtcDays(cursorDay, 1);
+      }
+
+      return result;
+    };
+
+    const plannedIntervals = [];
+    const unplannedIntervals = [];
 
     for (const r of rows) {
-      const mins = overlapMins(r.startTime, r.endTime);
-      if (r.type === "PlannedShutdown") plannedMinutes += mins;
-      if (r.type === "UnplannedDowntime") unplannedMinutes += mins;
+      if (r.type === "PlannedShutdown") {
+        const splitIntervals = splitPlannedShutdownDaily(
+          r.startTime,
+          r.endTime,
+        );
+
+        for (const [s, e] of splitIntervals) {
+          const clamped = clampInterval(
+            new Date(s),
+            new Date(e),
+            shiftStart,
+            shiftEnd,
+          );
+          if (clamped) plannedIntervals.push(clamped);
+        }
+      }
+
+      if (r.type === "UnplannedDowntime") {
+        const clamped = clampInterval(
+          r.startTime,
+          r.endTime,
+          shiftStart,
+          shiftEnd,
+        );
+        if (clamped) unplannedIntervals.push(clamped);
+      }
     }
 
-    // ✅ Donut format
-    const data = [
-      { name: "Planned Shutdown", value: plannedMinutes },
-      { name: "Unplanned Downtime", value: unplannedMinutes },
-    ];
+    const mergedPlanned = mergeIntervals(plannedIntervals);
+    const mergedUnplanned = mergeIntervals(unplannedIntervals);
+
+    const plannedMinutes = sumMinutes(mergedPlanned);
+    const unplannedMinutes = sumMinutes(mergedUnplanned);
 
     return res.status(200).json({
       success: true,
       meta: {
-        lineId,
-        shift: shiftVal,
+        lineId: line.lineId,
+        shift,
         date,
         startTime,
         endTime,
         plannedMinutes,
         unplannedMinutes,
       },
-      data,
+      data: [
+        { name: "Planned Shutdown", value: plannedMinutes },
+        { name: "Unplanned Downtime", value: unplannedMinutes },
+      ],
     });
   } catch (err) {
     console.error("getPlannedVsUnplannedMinutes:", err);
