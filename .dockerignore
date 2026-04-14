@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.github
+.env
+
+.env.example
+.env.influx
+npm-debug.log
+Dockerfile*
+README.md
+

@@ -24,7 +24,7 @@ const toIstYMD = (d) =>
   new Date(d).toLocaleDateString("en-CA", { timeZone: IST_TZ });
 
 /** Sunday check in IST */
-const isSundayIst = (now = new Date()) => getIstNow(now).getDay() === 0;
+// const isSundayIst = (now = new Date()) => getIstNow(now).getDay() === 0;
 
 // ✅ "HH:mm" -> minutes since 00:00
 const hhmmToMin = (hhmm) => {
@@ -172,7 +172,7 @@ const isPingAllowedNow = (rulesArg, now = new Date()) => {
   if (!rules) return true;
 
   // Sunday IST
-  if (isSundayIst(now)) return false;
+  // if (isSundayIst(now)) return false;
 
   // Holiday date IST
   const todayIst = toIstYMD(now);

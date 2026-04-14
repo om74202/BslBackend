@@ -5,7 +5,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "bun run --watch ./index.js",
-    "build": "bun build ./index.js --outdir ./dist --target bun --format cjs --external @prisma/client --external prisma --external bcrypt --external @mapbox/node-pre-gyp"
+    "start": "bun run ./index.js",
+    "build": "bun build ./index.js --outdir ./dist --target bun --format cjs --external @prisma/client --external prisma --external bcrypt --external @mapbox/node-pre-gyp",
+    "prisma:migrate": "bunx prisma migrate deploy --schema=db/prisma/schema.prisma",
+    "prisma:generate": "bunx prisma generate --schema=db/prisma/schema.prisma"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +25,7 @@
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^16.5.0",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-session": "^1.18.1",
     "jsonwebtoken": "^9.0.2",
