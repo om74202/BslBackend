@@ -549,12 +549,7 @@ const resolveTargetJphAt = (historyAsc, slotStartUtc, fallback = 100) => {
   const n = Number(ans);
   return Number.isFinite(n) ? n : fallback;
 };
-const hhmmToMinutes = (hhmm) => {
-  if (!hhmm || !hhmm.includes(":")) return null;
-  const [h, m] = hhmm.split(":").map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  return h * 60 + m;
-};
+
 
 
 
@@ -668,6 +663,7 @@ const buildLiveRowsForShift = async ({ shift, dateYmd, lineId }) => {
       shiftEndUtc: endTime,
       rowStartMin: s._endMin,
     });
+
 
     let startVal = valueAtOrBefore(series, new Date(slotStartUtc).getTime());
     let endVal = valueAtOrBefore(series, new Date(slotEndUtc).getTime());
@@ -1451,11 +1447,19 @@ const getJPHReportRows = async (req, res) => {
         rowStartMin: s._endMin,
       });
 
-      const startVal = valueAtOrBefore(series, new Date(slotStartUtc).getTime());
-      const endVal = valueAtOrBefore(series, new Date(slotEndUtc).getTime());
+     let startVal = valueAtOrBefore(series, new Date(slotStartUtc).getTime());
+     let endVal = valueAtOrBefore(series, new Date(slotEndUtc).getTime());
 
-      const produced = Math.max(0, (Number(endVal) || 0) - (Number(startVal) || 0));
+     if (endVal < startVal) {
+       startVal = 0;
+     }
 
+     console.log(`Slot ${s.timeSlot}: startVal=${startVal}, endVal=${endVal}`);
+
+     const produced = Math.max(
+       0,
+       (Number(endVal) || 0) - (Number(startVal) || 0),
+     );
       return {
         id: s.id,
         timeSlot: s.timeSlot,
