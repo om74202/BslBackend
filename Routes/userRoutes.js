@@ -170,14 +170,15 @@ userRouter.post('/login', async (req, res) => {
     const id = user.id;
     const token = JWT.sign(
       { id: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET_KEY
+      process.env.JWT_SECRET_KEY,
+      { expiresIn: "30d" }
     );
 
     res.cookie("authToken", token, {
       httpOnly: true, // 🚫 Blocks JavaScript access
       secure: false,  // ✅ false for dev; ⚠️ must be true in production (HTTPS)
       sameSite: "Lax",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
     req.session.user = {
@@ -204,7 +205,9 @@ userRouter.post('/login', async (req, res) => {
 });
 
 
-userRouter.post('/logout',isSignedIn,async(req,res)=>{
+userRouter.use(isSignedIn);
+
+userRouter.post('/logout',async(req,res)=>{
     res.clearCookie("authToken"); 
   req.session.destroy(); 
   res.json({ message: "Logged out successfully" });

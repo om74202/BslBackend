@@ -4,6 +4,7 @@ const userRouter = require("./Routes/userRoutes");
 const session = require("express-session");
 const cors = require("cors");
 const { influxRouter, sendBitEmails } = require("./Routes/influxRoutes");
+const { checkRunModeAndSendAlerts } = require("./functions/emailFunctions.js");
 const organisationRouter = require("./Routes/organizationRoute");
 const LineRouter = require("./Routes/machineRoute");
 const deviceRouter = require("./Routes/deviceRouter");
@@ -35,8 +36,40 @@ const http = require("http");
 const idealParamRoute = require("./Routes/idealParams");
 const shiftLogBookRouter = require("./Routes/shiftLogBookRoute.js");
 const activityTracker = require("./Routes/tracking.js");
+const { authenticate } = require("./middlewares/userMiddlewares");
 
 const app = express();
+
+
+const allowedHosts = new Set([
+  "iiot.bharatseats.com",
+  "20.198.22.6",
+
+  // keep localhost only for local development
+  "localhost",
+  "127.0.0.1",
+]);
+
+app.use((req, res, next) => {
+  const hostHeader = req.headers.host;
+
+  if (!hostHeader) {
+    console.log("host header missing")
+    return res.status(400).json({ message: "Missing Host header" });
+  }
+
+  const host = hostHeader.split(":")[0].toLowerCase();
+
+  if (!allowedHosts.has(host)) {
+    console.log("invalid host header ")
+    return res.status(400).json({ message: "Invalid Host header" });
+  }
+
+  console.log("host header injection passed ")
+
+  next();
+});
+
 app.use(cookieParser());
 app.set("trust proxy", 1);
 app.use(
@@ -71,23 +104,13 @@ function pingRunModeAPI() {
     return;
   }
 
-  fetch("http://localhost:3001/api/influx/check-runmode", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  })
-    .then((res) => res.json())
-    .then((data) => {
+  checkRunModeAndSendAlerts()
+    .then(() => {
       const now = new Date();
       const istTime = new Date(
         now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
       );
-      console.log(
-        "✔️ Pinged runmode API:",
-        istTime.toLocaleString(),
-        "Response:",
-      );
+      console.log("✔️ Pinged runmode API:", istTime.toLocaleString());
     })
     .catch((err) => {
       console.error("❌ Error pinging runmode API:", err.message);
@@ -167,22 +190,22 @@ app.get("/", async (req, res) => {
   res.json({ message: "" });
 });
 app.use("/api/user", userRouter);
-app.use("/api/influx", influxRouter);
-app.use("/api/shift-log-book", shiftLogBookRouter);
+app.use("/api/influx", authenticate, influxRouter);
+app.use("/api/shift-log-book", authenticate, shiftLogBookRouter);
 app.use("/api/activity-tracker", activityTracker);
-app.use("/api/org", organisationRouter);
-app.use("/api/line", LineRouter);
-app.use("/api/device", deviceRouter);
-app.use("/api/downtime-report", downtimeReportRouter);
-app.use("/api/loss-reason", lossReasonsRouter);
-app.use(`/api/planned-shutdown`, plannedShutdownRouter);
-app.use("/api/maintenance", maintenanceRouter);
-app.use(`/api/downtime`, downtimeRouter);
-app.use(`/api/productionPlanning`, idealParamRoute);
-app.use(`/api/gpsTracking`, gpsTrackingRouter);
-app.use("/api/torque/", torqueRouter);
-app.use("/api/drive", driveRouter);
-app.use("/api/checksheet", upload.single("checksheetData"), checkSheetRoute);
+app.use("/api/org", authenticate, organisationRouter);
+app.use("/api/line", authenticate, LineRouter);
+app.use("/api/device", authenticate, deviceRouter);
+app.use("/api/downtime-report", authenticate, downtimeReportRouter);
+app.use("/api/loss-reason", authenticate, lossReasonsRouter);
+app.use(`/api/planned-shutdown`, authenticate, plannedShutdownRouter);
+app.use("/api/maintenance", authenticate, maintenanceRouter);
+app.use(`/api/downtime`, authenticate, downtimeRouter);
+app.use(`/api/productionPlanning`, authenticate, idealParamRoute);
+app.use(`/api/gpsTracking`, authenticate, gpsTrackingRouter);
+app.use("/api/torque/", authenticate, torqueRouter);
+app.use("/api/drive", authenticate, driveRouter);
+app.use("/api/checksheet", authenticate, upload.single("checksheetData"), checkSheetRoute);
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
