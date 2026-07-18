@@ -31,17 +31,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function logEmailSkip(reason, context = {}) {
+  console.warn("[email][skip]", reason, context);
+}
+
+function logEmailFailure(reason, context = {}, error) {
+  console.error("[email][failure]", reason, context, {
+    message: error?.message,
+    stack: error?.stack,
+  });
+}
+
 function isnotRealtime(utcTimeStr) {
   console.log("hii from realtime function");
 
   async function sendMailsSequentially2(emails, floorTime) {
+    if (!Array.isArray(emails) || emails.length === 0) {
+      logEmailSkip("NUC alert email list is empty", { floorTime });
+      return;
+    }
+
     for (const email of emails) {
       try {
         await SendMailNUCAlert(email, floorTime);
         console.log(` Power off email Sent to ${email}`);
         await sleep(2000); // wait 2 seconds before sending next
       } catch (err) {
-        console.error(`Failed to send to ${email}:`, err.message);
+        logEmailFailure("Failed to send NUC alert email", { email, floorTime }, err);
       }
     }
   }
@@ -68,6 +84,13 @@ function isnotRealtime(utcTimeStr) {
     isEmailSent = true;
     console.log("Changing the variable to ", isEmailSent);
     sendMailsSequentially2(emails, floorTime);
+  } else {
+    logEmailSkip("Realtime outage detected but floorTime does not match NUC alert thresholds", {
+      floorTime,
+      diffMinutes,
+      inputTime: inputTime.toISOString(),
+      currentTime: currentTime.toISOString(),
+    });
   }
 
   return diffMinutes > 3;
@@ -409,13 +432,18 @@ function getLatestTimeOfTags(data) {
 }
 
 async function sendMailsSequentiallyForRestore(emails) {
+  if (!Array.isArray(emails) || emails.length === 0) {
+    logEmailSkip("Restore email list is empty", {});
+    return;
+  }
+
   for (const email of emails) {
     try {
       await SendMailNUCRestored(email);
       console.log(` Power on email Sent to ${email}`);
       await sleep(2000);
     } catch (err) {
-      console.error(`Failed to send to ${email}:`, err.message);
+      logEmailFailure("Failed to send restore email", { email }, err);
     }
   }
 }
@@ -549,7 +577,9 @@ const checkRunModeAndSendAlerts = async () => {
     console.log(isBefore5PM_IST());
     lastRealtimeDataTime = istToUtc(0, 30);
 
-    console.log("Not the time to send email and changing lastRealtimeDataTime to ", lastRealtimeDataTime);
+    logEmailSkip("Downtime email check skipped due to blocked time window or holiday", {
+      lastRealtimeDataTime,
+    });
     return;
   }
 
@@ -648,6 +678,24 @@ const checkRunModeAndSendAlerts = async () => {
 
     async function sendMailsSequentially(emails, info, lineName) {
       console.log("send mails sequentially function , check",emails);
+      if (!Array.isArray(emails) || emails.length === 0) {
+        logEmailSkip("Downtime alert recipient list is empty", {
+          floorTime,
+          lineName,
+          info,
+        });
+        return;
+      }
+
+      if (!message?.message) {
+        logEmailSkip("Downtime alert message is empty", {
+          floorTime,
+          lineName,
+          info,
+        });
+        return;
+      }
+
       for (const email of emails) {
         try {
           console.log("sending in process ,for ", email,message);
@@ -658,15 +706,25 @@ const checkRunModeAndSendAlerts = async () => {
               email === "aniket.singh@bharatseats.net") &&
             !message.isCeoSend
           ) {
-            console.log("Skipping CEO email as reason not allotted");
+            logEmailSkip("Skipping CEO/escalation email because downtime reason is missing", {
+              email,
+              lineName,
+              floorTime,
+              message: message?.message,
+            });
             continue;
           }
           await SendMailToUserAlert(email, message?.message, lineName);
           console.log(`✅ Sent to ${email}`);
           await sleep(2000);
         } catch (err) {
-          console.log(err)
-          console.error(`❌ Failed to send to ${email}:`, err.message);
+          logEmailFailure("Failed to send downtime alert email", {
+            email,
+            lineName,
+            floorTime,
+            info,
+            message: message?.message,
+          }, err);
         }
       }
     }
@@ -681,13 +739,20 @@ const checkRunModeAndSendAlerts = async () => {
         await sendMailsSequentially(config.emails, info, lineName);
         console.log(`${config.level} mail sent for floorTime:`, floorTime);
       } else {
-        console.log("✅ No alert triggered at this duration.");
+        logEmailSkip("No downtime alert triggered because floorTime does not match configured thresholds", {
+          floorTime,
+          lineName,
+          info,
+        });
       }
     }
 
-    processMailLogic(floorTime, info, lineName);
+    await processMailLogic(floorTime, info, lineName);
   } catch (err) {
-    console.error("❌ Error in checkRunModeAndSendAlerts:", err);
+    logEmailFailure("Error in checkRunModeAndSendAlerts", {
+      startTime,
+      endTime,
+    }, err);
   }
 };
 
@@ -727,6 +792,19 @@ let c94Triggered = false;
 let c95Triggered = false;
 
 async function sendEmails(config, message) {
+  if (!config) {
+    logEmailSkip("Dispatch delay email config missing", { message });
+    return;
+  }
+
+  if (!Array.isArray(config.emails) || config.emails.length === 0) {
+    logEmailSkip("Dispatch delay email list is empty", {
+      level: config.level,
+      message,
+    });
+    return;
+  }
+
   console.log(`Triggering ${config.level} emails`);
 
   const emailPromises = config.emails.map(async (email) => {
@@ -734,7 +812,11 @@ async function sendEmails(config, message) {
       await SendEmailDispatchDelay(email, message);
       console.log(`Email sent successfully to ${email} for ${config.level}`);
     } catch (error) {
-      console.error(`Failed to send email to ${email}:`, error);
+      logEmailFailure("Failed to send dispatch delay email", {
+        email,
+        level: config.level,
+        message,
+      }, error);
     }
   });
 
@@ -758,7 +840,9 @@ const sendBitEmails = async () => {
     }
 
     if (rows.length === 0) {
-      console.log("No data found in last 30s for c93, c94, c95");
+      logEmailSkip("Dispatch delay email check skipped because no BIT data was found", {
+        window: "last 90s",
+      });
       c93Triggered = false;
       c94Triggered = false;
       c95Triggered = false;

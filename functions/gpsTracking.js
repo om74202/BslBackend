@@ -28,7 +28,8 @@ function logAt(level, ...args) {
   const cur = order[LOG.level] ?? 20;
   if ((order[level] ?? 20) < cur) return;
 
-  const prefix = `[TRUCK-POLLER ${nowISO()}]`;
+  // const prefix = `[TRUCK-POLLER ${nowISO()}]`;
+  const prefix=""
   if (level === "error") console.error(prefix, ...args);
   else if (level === "warn") console.warn(prefix, ...args);
   else console.log(prefix, ...args);
