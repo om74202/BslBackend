@@ -51,70 +51,95 @@ function getShiftTiming(shift, selectedDate = null) {
     endTime: result.end,
   };
 }
-const torqueFields={
-  Front_Line:[ "Id","SequenceNo",
-    "Varient","Handside", 
-    
-    "PSN", "PSN_Time", "BillTktDateTime",
-    "BuckleTorque", "FrameAssyTorqueM10_1",
-    "FrameAssyTorqueM10_2", "FrameAssyTorqueM6", "Load@35kg", "Load@6kg",
-    
-    "MfgDateTime" ],
+const torqueFields = {
+  Front_Line: [
+    "Id",
+    "SequenceNo",
+    "Varient",
+    "Handside",
 
-    RB:[
+    "PSN",
+    "PSN_Time",
+    "BillTktDateTime",
+    "BuckleTorque",
+    "FrameAssyTorqueM10_1",
+    "FrameAssyTorqueM10_2",
+    "FrameAssyTorqueM6",
+    "Load@35kg",
+    "Load@6kg",
+
+    "MfgDateTime",
+  ],
+
+  RB: [
     "Sn",
     "SequenceNo",
     "Station",
     "PSN",
     "PSN_Time",
     "Status_60",
+    "Status_100",
     "Status_40",
     "BuiltTkt60Date",
+    "BuiltTkt100Date",
     "BuiltTkt40Date",
     "Mfg_Date60",
+    "Mfg_Date100",
     "Mfg_Date40",
     "Mfg_FinalBarcode60",
+    "Mfg_FinalBarcode100",
     "Mfg_FinalBarcode40",
     "ELR_Torque_Angle",
     "Frame60",
+    "Frame100",
     "Frame40",
     "Torque1Angle1",
     "Torque2Angle2",
     "Torque3Angle3",
     "Torque4Angle4",
     "Trim60RB",
+    "Trim100RB",
+    "Trim100RC",
     "Trim40RB",
     "Final_Status60",
-    "Final_Status40"
-]
+    "Final_Status40",
+  ],
 
-,RC:[
+  RC: [
     "Sn",
     "SequenceNo",
     "Station",
     "PSN",
     "PSN_Time",
     "Status_60",
+    "Status_100",
     "Status_40",
     "BuiltTkt60Date",
+    "BuiltTkt100Date",
     "BuiltTkt40Date",
     "Mfg_Date60",
+    "Mfg_Date100",
     "Mfg_Date40",
     "Mfg_FinalBarcode60",
+    "Mfg_FinalBarcode100",
     "Mfg_FinalBarcode40",
     "ELR_Torque_Angle",
     "Frame60",
+    "Frame100",
     "Frame40",
     "Torque1Angle1",
     "Torque2Angle2",
     "Torque3Angle3",
     "Torque4Angle4",
-    "Trim60RB",
-    "Trim40RB",
+    // "Trim60RB",
+    // "Trim100RB",
+    "Trim100RC",
+    // "Trim40RB",
     "Final_Status60",
-    "Final_Status40"
-]
-}
+    "Final_Status100",
+    "Final_Status40",
+  ],
+};
 
 const plantFields=[
 	"rework", "Today_Production_plan","Total_Production","Total_Target_Prod","pph", "reject", "First_Time_Pass_Rate","Today_planned_Prod","total_production_set",
