@@ -44,6 +44,7 @@ const app = express();
 const allowedHosts = new Set([
   "iiot.bharatseats.com",
   "20.198.22.6",
+  "20.197.30.129",
 
   // keep localhost only for local development
   "localhost",
