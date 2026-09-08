@@ -78,6 +78,8 @@ app.use(
     origin: [
       "https://20.198.22.6",
       "http://192.168.1.13:5173",
+      "http://20.197.30.129",
+      "https://20.197.30.129",
       "http://20.198.22.6",
       "http://localhost:5173",
       "http://localhost:3000",
