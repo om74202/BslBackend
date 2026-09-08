@@ -26,7 +26,8 @@ const multer = require("multer");
 const gpsTrackingRouter = require("./Routes/gpsTracking.js");
 const upload = multer();
 const { createDevicePoller } = require("./functions/gpsTracking.js");
-require("dotenv").config({ path: ".env.influx" });
+require("dotenv").config({ path: "./db/.env" });
+require("dotenv").config({ path: "./.env.influx" });
 require("./Routes/Websocket");
 const {
   maybeSendDailyShiftReports,
