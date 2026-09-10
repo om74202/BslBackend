@@ -164,7 +164,7 @@ scheduleNextRun();
 async function runSendBitEmails() {
   try {
     console.log("Running sendBitEmails at:", new Date().toISOString());
-    await sendBitEmails();
+    // await sendBitEmails();
   } catch (err) {
     console.error("Error in scheduled sendBitEmails:", err);
   } finally {
