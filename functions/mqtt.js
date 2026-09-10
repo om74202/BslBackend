@@ -1,7 +1,7 @@
 // utils/mqttPublisher.js
 const mqtt = require("mqtt");
 
-const MQTT_URL = "mqtt://20.197.46.212:3006";
+const MQTT_URL = "mqtt://20.197.30.129:3006";
 const MQTT_USERNAME = "opsight";
 const MQTT_PASSWORD = "Devops@opsight1";
 
