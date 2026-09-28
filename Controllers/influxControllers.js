@@ -3319,7 +3319,7 @@ const getPerformanceReportPdf = async (req, res) => {
     // Use your existing template path (same as email job)
     const tplPath =
       req.query.templatePdfPath ||
-      "/home/opsight/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+      "/home/opsightadmin/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
     // const tplPath =
     //   "/home/om-mishra/Desktop/projects/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
 
@@ -3973,7 +3973,7 @@ async function sendTodayPerformanceReportPdf({ shift = "A", outputDir, recipient
   }
 
 
-  const tplPath ="/home/opsight/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
+  const tplPath ="/home/opsightadmin/BharatSeats/BslBackend/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
   // const tplPath ="/home/om-mishra/BslVmFrontend/src/Assets/PRODUCTION LINE PERFORMANCE MONITORING (S-Q-P) (4).pdf";
 
 

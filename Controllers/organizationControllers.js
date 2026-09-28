@@ -41,7 +41,7 @@ const createOrganization=async(req,res)=>{
 
         const influxData={name:name}
 
-        const influxResponse = await axios.post(`http://20.198.22.6:8086/api/v2/orgs`, influxData, {
+        const influxResponse = await axios.post(`http://20.197.30.129:3005/api/v2/orgs`, influxData, {
                         headers: {
                             Authorization: `Token Y__1DCnm2uTaCeqnTy2Xe6AScyzrM1zSwfrPBiXy9ZjuxEx5DAWfOz4BD-weu0NyQDeR7ig_uBaj2k8B8gKc9A==`,
                             'Content-Type': 'application/json'

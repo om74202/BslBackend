@@ -171,7 +171,7 @@ const SendMailToUser = async (email, password, name, organisationName="Bharat Se
 
       <p style="font-size: 16px; margin-top: 20px;">Click here to Login:</p>
       <p style="font-size: 16px;">
-        <a href="https://20.198.22.6/" style="color: #007BFF; text-decoration: none; font-weight: bold;">Login Now</a>
+        <a href="https://20.197.30.129/" style="color: #007BFF; text-decoration: none; font-weight: bold;">Login Now</a>
       </p>
       
       <p style="font-size: 14px; color: #6c757d; margin-top: 30px;">Please do not ignore this mail.</p>
