@@ -758,240 +758,256 @@ const processDriveData = (driveArray) => {
 
 
 
-const getQualityData=async(req,res)=>{
-const {line}=req.params;
+const getQualityData = async (req, res) => {
+  const { line } = req.params;
 
+  const { shift, date } = req.params;
+  const selectedDate = date ? new Date(date) : new Date();
 
-const { shift, date } = req.params;
-const selectedDate = date ? new Date(date) : new Date();
+  const { startTime, endTime } = getShiftTiming(shift, selectedDate);
 
-const { startTime, endTime } = getShiftTiming(shift, selectedDate);
+  if (!startTime || !endTime) {
+    throw new Error("Start time or end time is undefined.");
+  }
 
-    if (!startTime || !endTime) {
-      throw new Error("Start time or end time is undefined.");
-    }
+  let bucket = `SHIFT_${shift}`;
+  if (shift === "r") {
+    bucket = "TODAY";
+  }
 
-let bucket=`SHIFT_${shift}`
-	if(shift==="r"){
-		bucket="TODAY";
-	}
+  const reasons = reasonsMap[line];
+  const measurement = `QUALITY`;
 
-const reasons=reasonsMap[line]
-const measurement=`QUALITY`
+  console.time("queryTime1");
 
-
-console.time("queryTime1")
-
-    // Build optimized Flux query
-	// const fluxStringArray = `[${queryField.map(f => `"${f}"`).join(", ")}]`;
+  // Build optimized Flux query
+  // const fluxStringArray = `[${queryField.map(f => `"${f}"`).join(", ")}]`;
+  // no more reasonsMap lookups here
   const fluxQuery = `
   from(bucket: "${bucket}")
   |> range(start: time(v: "${startTime}"), stop: time(v: "${endTime}"))
-
-    |> filter(fn: (r) => 
-      (r["LINE"] == "${line}") or 
-      (
-        (r["LINE"] == "dismental" or r["LINE"] == "rework") and 
-        (${reasons.map(f => `r._field == "${f}"`).join(" or ")})
-      )
+  |> filter(fn: (r) =>
+    (r["LINE"] == "${line}") or
+    (
+      (r["LINE"] == "dismental" or r["LINE"] == "rework") and
+      r["_field"] != "buckets_ids" and
+      r["_field"] != "read_time"
     )
-    |> aggregateWindow(every: 30s, fn: last, createEmpty: false)
-    |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
-    |> sort(columns: ["_time"], desc: false)
-  `;
-  
-  const results = [];
-    const queryStartTime = Date.now();
+  )
+  |> aggregateWindow(every: 30s, fn: last, createEmpty: false)
+  |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
+  |> sort(columns: ["_time"], desc: false)
+`;
 
-    await new Promise((resolve, reject) => {
-      queryApi.queryRows(fluxQuery, {
-        next(row, tableMeta) {
-          try {
-            results.push(tableMeta.toObject(row));
-          } catch (parseError) {
-            console.warn('Row parsing error:', parseError);
+  const results = [];
+  const queryStartTime = Date.now();
+
+  await new Promise((resolve, reject) => {
+    queryApi.queryRows(fluxQuery, {
+      next(row, tableMeta) {
+        try {
+          results.push(tableMeta.toObject(row));
+        } catch (parseError) {
+          console.warn("Row parsing error:", parseError);
+        }
+      },
+      error(error) {
+        console.error("Query execution error:", error);
+        reject(error);
+      },
+      complete() {
+        console.log(`Query completed in ${Date.now() - queryStartTime}ms`);
+        resolve();
+      },
+    });
+  });
+
+  console.timeEnd("queryTime1");
+  function humanReadableTime(isoString) {
+    const date = parseISO(isoString);
+    return format(date, "dd MMM yyyy, hh:mm:ss a");
+  }
+  let firstTimePassRated = "First_Time_Pass_Rate";
+  let lastData = {};
+  const processQualityData = (dataArray) => {
+    const result = {
+      firstTimePassRate: [],
+      rjData: {},
+      rwData: {},
+    };
+
+    dataArray.forEach((item) => {
+      if (item.LINE !== "dismental" && item.LINE !== "rework") {
+        lastData = item;
+      }
+
+      const time = item._time;
+      const displayTime = format(new Date(time), "HH:mm"); // Using date-fns format
+
+      // Process First_Time_Pass_Rate
+      const passRateValue = item[firstTimePassRated] ?? null; // Using nullish coalescing
+      if (passRateValue !== null) {
+        result.firstTimePassRate.push({
+          time: displayTime,
+          value: passRateValue,
+          originalTime: time, // Adding originalTime for consistency
+        });
+      }
+      // Process rj* metrics
+      Object.keys(item).forEach((key) => {
+        if (key.startsWith("rj")) {
+          if (!result.rjData[key]) {
+            result.rjData[key] = [];
           }
-        },
-        error(error) {
-          console.error('Query execution error:', error);
-          reject(error);
-        },
-        complete() {
-          console.log(`Query completed in ${Date.now() - queryStartTime}ms`);
-          resolve();
+          result.rjData[key].push({
+            time: displayTime,
+            value: item[key],
+            originalTime: time,
+          });
+        }
+      });
+
+      // Process rw* metrics
+      Object.keys(item).forEach((key) => {
+        if (key.startsWith("rw")) {
+          if (!result.rwData[key]) {
+            result.rwData[key] = [];
+          }
+          result.rwData[key].push({
+            time: displayTime,
+            value: item[key],
+            originalTime: time,
+          });
         }
       });
     });
 
-    console.timeEnd("queryTime1");
-	function humanReadableTime(isoString) {
-  const date = parseISO(isoString);
-  return format(date, "dd MMM yyyy, hh:mm:ss a");
-}
-let firstTimePassRated="First_Time_Pass_Rate"
-let lastData={}
-const processQualityData = (dataArray) => {
-  const result = {
-      firstTimePassRate: [],
-      rjData: {},
-      rwData: {},
+    // Sort all arrays by original time (ascending)
+    result.firstTimePassRate.sort(
+      (a, b) => new Date(a.originalTime) - new Date(b.originalTime),
+    );
+
+    Object.keys(result.rjData).forEach((key) => {
+      result.rjData[key].sort(
+        (a, b) => new Date(a.originalTime) - new Date(b.originalTime),
+      );
+    });
+
+    Object.keys(result.rwData).forEach((key) => {
+      result.rwData[key].sort(
+        (a, b) => new Date(a.originalTime) - new Date(b.originalTime),
+      );
+    });
+
+    return result;
   };
 
-  dataArray.forEach(item => {
-	   if(item.LINE!=="dismental" && item.LINE!=="rework"){
-                  lastData=item;
-          }
+  const processQualityReasons = (dataArray) => {
+    const result = {
+      dismental: [],
+      rework: [],
+    };
 
-      const time = item._time;
-      const displayTime = format(new Date(time), 'HH:mm'); // Using date-fns format
-      
-      // Process First_Time_Pass_Rate
-const passRateValue = item[firstTimePassRated] ?? null; // Using nullish coalescing
-    if (passRateValue !== null) {
-      result.firstTimePassRate.push({
-        time: displayTime,
-        value: passRateValue,
-        originalTime: time // Adding originalTime for consistency
+    // Filter and separate data
+    dataArray.forEach((item) => {
+      if (item.LINE === "dismental" || item.LINE === "rework") {
+        const entry = {
+          OriginalTime: item._time,
+          time: new Date(item._time).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          }),
+          metrics: {},
+        };
+
+        const META_KEYS = new Set([
+          "_time",
+          "_start",
+          "_stop",
+          "_measurement",
+          "_field",
+          "_value",
+          "LINE",
+          "result",
+          "table",
+          "buckets_ids",
+          "read_time",
+        ]);
+
+        Object.keys(item).forEach((key) => {
+          if (META_KEYS.has(key)) return;
+          const readableKey = String(key).replace(/_/g, " ");
+
+          entry.metrics[readableKey] = item[key];
+        });
+
+        // Push to appropriate array
+        item.LINE === "dismental"
+          ? result.dismental.push(entry)
+          : result.rework.push(entry);
+      }
+    });
+
+    // Helper function to convert time to minutes for comparison
+    const timeToMinutes = (timeStr) => {
+      const [time, period] = timeStr.split(" ");
+      let [hours, minutes] = time.split(":").map(Number);
+
+      if (period === "PM" && hours !== 12) hours += 12;
+      if (period === "AM" && hours === 12) hours = 0;
+
+      return hours * 60 + minutes;
+    };
+
+    // Get shift-specific cutoff in minutes
+    const shiftCutoffs = {
+      SHIFT_B: timeToMinutes("02:35 PM"),
+      SHIFT_C: timeToMinutes("11:05 PM"),
+    };
+
+    // Modified function to get last valid entry after shift cutoff
+    const getLastValidEntry = (arr, bucket) => {
+      if (!arr.length) return null;
+
+      // Use shift cutoff if bucket is B or C
+      const cutoff = shiftCutoffs[bucket] ?? 0;
+
+      // Find the last item whose time is after cutoff
+      const lastEntry = [...arr].reverse().find((entry) => {
+        const entryMinutes = timeToMinutes(entry.time);
+        return entryMinutes >= cutoff;
       });
-    }
-      // Process rj* metrics
-      Object.keys(item).forEach(key => {
-          if (key.startsWith('rj')) {
-              if (!result.rjData[key]) {
-                  result.rjData[key] = [];
-              }
-              result.rjData[key].push({
-                  time: displayTime,
-                  value: item[key],
-                  originalTime: time
-              });
-          }
-      });
 
-      // Process rw* metrics
-      Object.keys(item).forEach(key => {
-          if (key.startsWith('rw')) {
-              if (!result.rwData[key]) {
-                  result.rwData[key] = [];
-              }
-              result.rwData[key].push({
-                  time: displayTime,
-                  value: item[key],
-                  originalTime: time
-              });
-          }
-      });
-  });
+      return lastEntry || null;
+    };
 
-  // Sort all arrays by original time (ascending)
-  result.firstTimePassRate.sort((a, b) => new Date(a.originalTime) - new Date(b.originalTime));
-  
-  Object.keys(result.rjData).forEach(key => {
-      result.rjData[key].sort((a, b) => new Date(a.originalTime) - new Date(b.originalTime));
-  });
-  
-  Object.keys(result.rwData).forEach(key => {
-      result.rwData[key].sort((a, b) => new Date(a.originalTime) - new Date(b.originalTime));
-  });
+    // Use the modified function with shift bucket
+    const lastDismental = getLastValidEntry(result.dismental, bucket);
+    const lastRework = getLastValidEntry(result.rework, bucket);
 
-  return result;
-};
+    const lastValues = {
+      dismental: lastDismental ? lastDismental.metrics : null,
+      dismentalTime: lastDismental ? lastDismental.time : null,
+      rework: lastRework ? lastRework.metrics : null,
+      reworkTime: lastRework ? lastRework.time : null,
+    };
 
-const processQualityReasons = (dataArray) => {
-  const result = {
-    dismental: [],
-    rework: []
+    return {
+      separatedData: result,
+      lastValues,
+    };
   };
-
-  // Filter and separate data
-  dataArray.forEach(item => {
-    if (item.LINE === "dismental" || item.LINE === "rework") {
-      const entry = {
-        OriginalTime: item._time,
-        time: new Date(item._time).toLocaleTimeString([], { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: true 
-        }),
-        metrics: {}
-      };
-
-      // Extract only FLR/CLR/RLR fields
-      Object.keys(item).forEach(key => {
-        if (key.match(/^(FLR|CLR|RLR)/)) {
-          entry.metrics[key] = item[key];
-        }
-      });
-
-      // Push to appropriate array
-      item.LINE === "dismental"
-        ? result.dismental.push(entry)
-        : result.rework.push(entry);
-    }
-  });
-
-// Helper function to convert time to minutes for comparison
-const timeToMinutes = (timeStr) => {
-  const [time, period] = timeStr.split(' ');
-  let [hours, minutes] = time.split(':').map(Number);
-
-  if (period === 'PM' && hours !== 12) hours += 12;
-  if (period === 'AM' && hours === 12) hours = 0;
-
-  return hours * 60 + minutes;
-};
-
-// Get shift-specific cutoff in minutes
-const shiftCutoffs = {
-  SHIFT_B: timeToMinutes("02:35 PM"),
-  SHIFT_C: timeToMinutes("11:05 PM")
-};
-
-// Modified function to get last valid entry after shift cutoff
-const getLastValidEntry = (arr, bucket) => {
-  if (!arr.length) return null;
-
-  // Use shift cutoff if bucket is B or C
-  const cutoff = shiftCutoffs[bucket] ?? 0;
-
-  // Find the last item whose time is after cutoff
-  const lastEntry = [...arr].reverse().find(entry => {
-    const entryMinutes = timeToMinutes(entry.time);
-    return entryMinutes >= cutoff;
-  });
-
-  return lastEntry || null;
-};
-
-// Use the modified function with shift bucket
-const lastDismental = getLastValidEntry(result.dismental, bucket);
-const lastRework = getLastValidEntry(result.rework, bucket);
-
-const lastValues = {
-  dismental: lastDismental ? lastDismental.metrics : null,
-  dismentalTime: lastDismental ? lastDismental.time : null,
-  rework: lastRework ? lastRework.metrics : null,
-  reworkTime: lastRework ? lastRework.time : null
-};
-
-  return { 
-    separatedData: result, 
-    lastValues 
-  };
-};
-
-
-
 
   res.json({
-    success:true,
-	  data:processQualityData(results),
-    latestData:lastData,
-    rawData:processQualityReasons(results).lastValues,
-	  
-    message:"Quality Data fetched successfully"
-  })
-}
+    success: true,
+    data: processQualityData(results),
+    latestData: lastData,
+    rawData: processQualityReasons(results).lastValues,
+
+    message: "Quality Data fetched successfully",
+  });
+};
 
 
 const getLineData=async(req,res)=>{
