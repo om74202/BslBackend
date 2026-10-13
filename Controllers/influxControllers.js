@@ -761,6 +761,14 @@ const processDriveData = (driveArray) => {
 const getQualityData = async (req, res) => {
   const { line } = req.params;
 
+  const lineToFieldPrefix = {
+    Front_Line: "FL_",
+    RB: "RB_",
+    RC: "RC_",
+  };
+
+  const fieldPrefix = lineToFieldPrefix[line];
+
   const { shift, date } = req.params;
   const selectedDate = date ? new Date(date) : new Date();
 
@@ -783,13 +791,14 @@ const getQualityData = async (req, res) => {
   // Build optimized Flux query
   // const fluxStringArray = `[${queryField.map(f => `"${f}"`).join(", ")}]`;
   // no more reasonsMap lookups here
-  const fluxQuery = `
-  from(bucket: "${bucket}")
+const fluxQuery = `
+from(bucket: "${bucket}")
   |> range(start: time(v: "${startTime}"), stop: time(v: "${endTime}"))
   |> filter(fn: (r) =>
     (r["LINE"] == "${line}") or
     (
       (r["LINE"] == "dismental" or r["LINE"] == "rework") and
+      r["_field"] =~ /^${fieldPrefix}/ and
       r["_field"] != "buckets_ids" and
       r["_field"] != "read_time"
     )
@@ -935,12 +944,19 @@ const getQualityData = async (req, res) => {
           "read_time",
         ]);
 
-        Object.keys(item).forEach((key) => {
-          if (META_KEYS.has(key)) return;
-          const readableKey = String(key).replace(/_/g, " ");
+       Object.keys(item).forEach((key) => {
+         if (META_KEYS.has(key)) return;
 
-          entry.metrics[readableKey] = item[key];
-        });
+         // Strip the line prefix (FL_ / RB_ / RC_) if present
+         const withoutPrefix = key.startsWith(fieldPrefix)
+           ? key.slice(fieldPrefix.length)
+           : key;
+
+         // Influx encodes spaces as underscores — decode for display
+         const readableKey = withoutPrefix.replace(/_/g, " ");
+
+         entry.metrics[readableKey] = item[key];
+       });
 
         // Push to appropriate array
         item.LINE === "dismental"
