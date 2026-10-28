@@ -1,0 +1,169 @@
+{
+  "postgres": {
+    "source": "db/prisma/schema.prisma",
+    "tables": {
+      "Organization": {
+        "columns": ["id", "name", "email", "address", "phoneNumber", "imageUrl", "unit", "Department", "Desingation", "shiftCount", "influxOrgID", "influxToken", "status"],
+        "description": "Organizations, units, Influx credentials, and master ownership for users, lines, devices, shifts, checksheets, and submissions"
+      },
+      "ShiftTimings": {
+        "columns": ["id", "start", "end", "organizationId"],
+        "description": "Organization shift start/end definitions"
+      },
+      "CustomShiftsTimings": {
+        "columns": ["id", "start", "end", "lineId"],
+        "description": "Line-specific custom shift definitions"
+      },
+      "PlannedBreakCustom": {
+        "columns": ["id", "start", "end", "typeOfBreak", "customShiftTimingId"],
+        "description": "Break windows for custom shifts"
+      },
+      "PlannedBreak": {
+        "columns": ["id", "start", "end", "ShiftId", "typeOfBreak", "lineName"],
+        "description": "Break windows for standard shifts"
+      },
+      "Line": {
+        "columns": ["organizationId", "lineId", "lineName", "noOfCustomShifts", "noOfShifts", "targetJPH", "noOfStations", "lineType", "status"],
+        "description": "Production lines and their production targets"
+      },
+      "TargetJPHUpdateHistory": {
+        "columns": ["id", "userId", "updatedAt", "lineId", "updatedValue"],
+        "description": "Audit history for target JPH changes by line and user"
+      },
+      "Station": {
+        "columns": ["id", "name", "lineId", "Pokayoke", "status"],
+        "description": "Stations attached to production lines"
+      },
+      "TorqueGun": {
+        "columns": ["torqueGunId", "torqueGunName", "torqueGunStatus", "torqueGunIp", "torqueGunMaxLimit", "torqueGunMinLimit", "torqueGunMaxAngle", "torqueGunMinAngle", "createdAt", "stationId", "status"],
+        "description": "Torque gun master data and configured torque/angle limits"
+      },
+      "Drive": {
+        "columns": ["driveId", "driveName", "organizationId", "currentMaxLimit", "currentMinLimit", "voltageMaxLimit", "voltageMinLimit", "frequencyMaxLimit", "frequencyMinLimit", "createdAt", "status"],
+        "description": "Drive master data and configured current/voltage/frequency limits"
+      },
+      "User": {
+        "columns": ["id", "name", "email", "password", "role", "status", "createdAt", "address", "phoneNumber", "lastLogin", "organizationId", "uploadImageUrl"],
+        "description": "Application users, credentials, roles, organization membership, and line assignment"
+      },
+      "Device": {
+        "columns": ["id", "name", "type", "organizationId", "lineId", "status"],
+        "description": "Devices mapped to organizations and lines"
+      },
+      "ChecksheetTable": {
+        "columns": ["id", "name", "tableData", "cellProperties", "cellStyles", "createdAt", "updatedAt", "organizationId", "userId"],
+        "description": "Checksheet templates and spreadsheet-like layout metadata"
+      },
+      "IdealParameters": {
+        "columns": ["id", "JPH", "Quality", "createdAt", "lineName"],
+        "description": "Ideal JPH and quality parameters per line"
+      },
+      "DowntimeManagement": {
+        "columns": ["id", "type", "reason", "reasonType", "startTime", "endTime", "lineId"],
+        "description": "Downtime reason master/history entries by line"
+      },
+      "ProductionLossReasons": {
+        "columns": ["id", "lossCode", "lossReason", "lossSubReason"],
+        "description": "Production loss reason catalog"
+      },
+      "PlannedShutdown": {
+        "columns": ["id", "name", "type", "startTime", "endTime", "createdBy", "reason", "createdAt", "description", "downtimeReportId"],
+        "description": "Holidays, planned shutdowns, and unplanned downtime records"
+      },
+      "PlannedShutdownUpdateHistory": {
+        "columns": ["id", "userId", "updatedAt", "plannedShutdownId", "updatedValue"],
+        "description": "Audit history for planned shutdown changes"
+      },
+      "DowntimeReport": {
+        "columns": ["id", "lineId", "shift", "reportDate", "isSubmitted", "createdAt", "createdBy", "rows"],
+        "description": "Submitted downtime report rows per line/date/shift"
+      },
+      "tracking_events": {
+        "columns": ["id", "ts", "user_id", "event_name", "route", "page_name", "element_id", "element_text", "metadata", "ip", "user_agent"],
+        "description": "Frontend activity tracking events"
+      },
+      "ShiftLogBook": {
+        "columns": ["id", "lineId", "reportDate", "shift", "payload", "isSubmitted", "createdBy", "createdAt", "updatedAt"],
+        "description": "Shift log book payloads per line/date/shift"
+      },
+      "Maintenance": {
+        "columns": ["id", "message", "status", "createdAt", "updatedAt", "approvedBy", "reviewComment", "startTime", "endTime", "createdBy", "lineId"],
+        "description": "Maintenance requests and approvals by line"
+      },
+      "Submission": {
+        "columns": ["id", "userId", "createdAt", "updatedAt", "cellProperties", "cellStyles", "name", "organizationId", "tableData", "status", "comment", "line", "ApprovedBy", "location", "shift"],
+        "description": "Submitted checksheet/table data and approval status"
+      },
+      "Truck": {
+        "columns": ["id", "name", "alias", "status", "data", "createdAt", "updatedAt"],
+        "description": "Truck/RFID master data and latest GPS/trip state"
+      },
+      "Trip": {
+        "columns": ["id", "departBsl", "reachedMsil", "departMsil", "reachedBsl", "truckId", "createdAt", "updatedAt"],
+        "description": "Truck trip timestamps between BSL and MSIL"
+      }
+    }
+  },
+  "influxdb": {
+    "source": "Inferred from Flux queries in Controllers, Routes, and functions",
+    "buckets": {
+      "TODAY": {
+        "measurements": {
+          "Performance": {
+            "tags": ["LINE"],
+            "fields": ["Total_Prod_Today", "Total_Target_Prod", "communication_status_direct", "communication_status_via_replication", "Varient", "Verient", "OEE", "Quality", "pph", "FTPQ", "total_production_set"],
+            "description": "Live and same-day production, communication, variant, and performance metrics"
+          },
+          "QUALITY": {
+            "tags": ["LINE"],
+            "fields": ["Total_Production", "reject", "rework", "Quality", "FTPQ"],
+            "description": "Quality and rejection/rework metrics by line"
+          },
+          "connection": {
+            "tags": [],
+            "fields": ["c93", "c94", "c95"],
+            "description": "Dispatch delay connection bits used for escalation emails"
+          },
+          "GPS": {
+            "tags": ["RFID"],
+            "fields": ["psn"],
+            "description": "Truck GPS PSN values grouped by RFID"
+          }
+        }
+      },
+      "SHIFT_A|SHIFT_B|SHIFT_C": {
+        "measurements": {
+          "Performance": {
+            "tags": ["LINE"],
+            "fields": ["Total_Prod_Today", "Total_Target_Prod", "Varient", "Verient", "OEE", "Quality", "pph", "FTPQ", "total_production_set"],
+            "description": "Shift-wise production and performance metrics"
+          },
+          "QUALITY": {
+            "tags": ["LINE"],
+            "fields": ["Total_Production", "reject", "rework", "Quality", "FTPQ"],
+            "description": "Shift-wise quality metrics"
+          },
+          "TORQUE": {
+            "tags": ["station", "torque_gun"],
+            "fields": ["angle", "torque_value", "connection_status", "status", "min_limit", "max_limit"],
+            "description": "Torque gun readings and status by station and gun"
+          },
+          "DRIVE": {
+            "tags": ["drive"],
+            "fields": ["amp", "volt", "freq", "running_count", "stopped_count", "status", "amp_status"],
+            "description": "Drive readings and status"
+          }
+        }
+      },
+      "torque_plc": {
+        "measurements": {
+          "torque_measurement": {
+            "tags": ["station", "torque_gun"],
+            "fields": ["torque_value"],
+            "description": "Realtime websocket torque values"
+          }
+        }
+      }
+    }
+  }
+}

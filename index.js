@@ -36,6 +36,7 @@ const {
 const http = require("http");
 const idealParamRoute = require("./Routes/idealParams");
 const shiftLogBookRouter = require("./Routes/shiftLogBookRoute.js");
+const copilotHistoryRouter = require("./Routes/copilotHistory.js");
 const activityTracker = require("./Routes/tracking.js");
 const { authenticate } = require("./middlewares/userMiddlewares");
 
@@ -161,6 +162,7 @@ scheduleNextRun();
 
   poller.start();
 })();
+
 async function runSendBitEmails() {
   try {
     console.log("Running sendBitEmails at:", new Date().toISOString());
@@ -196,6 +198,7 @@ app.get("/", async (req, res) => {
 app.use("/api/user", userRouter);
 app.use("/api/influx", authenticate, influxRouter);
 app.use("/api/shift-log-book", authenticate, shiftLogBookRouter);
+app.use("/api/copilot-history", authenticate, copilotHistoryRouter);
 app.use("/api/activity-tracker", activityTracker);
 app.use("/api/org", authenticate, organisationRouter);
 app.use("/api/line", authenticate, LineRouter);
