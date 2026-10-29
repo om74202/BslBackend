@@ -2,6 +2,7 @@ const prismaClient = require("../lib/prismaClient");
 
 const CONVERSATION_FIELDS = ["id", "sessionId", "title", "context", "userId", "organizationId", "createdAt", "updatedAt"];
 const TURN_FIELDS = ["id", "conversationId", "question", "response", "queries", "createdAt"];
+const AUDIT_EMAILS = new Set(["ommishra74202@gmail.com"]);
 
 function selectFields(value, allowedFields, defaultFields) {
   const fields = typeof value === "string" && value.trim()
@@ -16,7 +17,7 @@ const getUser = (req) => {
   if (!req.user?.id) return null;
   return prismaClient.user.findUnique({
     where: { id: String(req.user.id) },
-    select: { id: true, organizationId: true },
+    select: { id: true, email: true, organizationId: true },
   });
 };
 
@@ -82,6 +83,43 @@ const getTurn = async (req, res) => {
   } catch (error) {
     console.error("getCopilotTurn:", error);
     return res.status(500).json({ message: "Failed to load Copilot turn" });
+  }
+};
+
+const getDailyAudit = async (req, res) => {
+  try {
+    const user = await getUser(req);
+    const { date } = req.query;
+    if (!user) return res.status(401).json({ message: "User not found" });
+    if (!AUDIT_EMAILS.has(user.email)) return res.status(403).json({ message: "Access denied" });
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ message: "A valid date is required" });
+    }
+
+    const start = new Date(`${date}T00:00:00+05:30`);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const turns = await prismaClient.copilotTurn.findMany({
+      where: { createdAt: { gte: start, lt: end } },
+      select: {
+        id: true,
+        question: true,
+        response: true,
+        queries: true,
+        createdAt: true,
+        conversation: {
+          select: {
+            sessionId: true,
+            user: { select: { name: true, email: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return res.json({ date, turns });
+  } catch (error) {
+    console.error("getCopilotDailyAudit:", error);
+    return res.status(500).json({ message: "Failed to load Copilot audit" });
   }
 };
 
@@ -164,4 +202,4 @@ const clearConversations = async (req, res) => {
   }
 };
 
-module.exports = { listConversations, getConversation, getTurn, saveTurn, deleteConversation, clearConversations };
+module.exports = { listConversations, getConversation, getTurn, getDailyAudit, saveTurn, deleteConversation, clearConversations };

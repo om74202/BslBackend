@@ -40,6 +40,8 @@ const copilotHistoryRouter = require("./Routes/copilotHistory.js");
 const activityTracker = require("./Routes/tracking.js");
 const { authenticate } = require("./middlewares/userMiddlewares");
 
+require("./jobs/scheduler.js");
+
 const app = express();
 
 
