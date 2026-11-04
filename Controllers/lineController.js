@@ -140,6 +140,28 @@ const getLinesByOrgId=async (req, res)=>{
       }
 }
 
+const getLineJphByOrgId = async (req, res) => {
+  try {
+    const lines = await prismaClient.line.findMany({
+      where: { organizationId: req.params.orgId, lineType: "mainLine" },
+      select: { lineName: true },
+    });
+    const params = await prismaClient.idealParameters.findMany({
+      where: { lineName: { in: lines.map((line) => line.lineName) } },
+      select: { lineName: true, JPH: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const jphByName = new Map();
+    for (const param of params) {
+      if (!jphByName.has(param.lineName)) jphByName.set(param.lineName, param.JPH);
+    }
+    return res.json(Object.fromEntries(lines.map((line) => [line.lineName, jphByName.get(line.lineName) ?? null])));
+  } catch (error) {
+    console.error("getLineJphByOrgId:", error);
+    return res.status(500).json({ message: "Failed to fetch line JPH" });
+  }
+};
+
 
 const updateTargetJPH = async (req, res) => {
   try {
@@ -508,6 +530,7 @@ module.exports = {
   getTargetJPHUpdateHistory,
   getJphHistoryForShift,
   getStationByOrgId,
+  getLineJphByOrgId,
   setLinesStatus,
   createLine
   ,getLines,getLinesByOrgId
