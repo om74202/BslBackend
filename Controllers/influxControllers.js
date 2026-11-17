@@ -944,19 +944,19 @@ from(bucket: "${bucket}")
           "read_time",
         ]);
 
-       Object.keys(item).forEach((key) => {
-         if (META_KEYS.has(key)) return;
+        Object.keys(item).forEach((key) => {
+          if (META_KEYS.has(key)) return;
 
-         // Strip the line prefix (FL_ / RB_ / RC_) if present
-         const withoutPrefix = key.startsWith(fieldPrefix)
-           ? key.slice(fieldPrefix.length)
-           : key;
+          // Strip the line prefix (FL_ / RB_ / RC_) if present
+          const withoutPrefix = key.startsWith(fieldPrefix)
+            ? key.slice(fieldPrefix.length)
+            : key;
 
-         // Influx encodes spaces as underscores — decode for display
-         const readableKey = withoutPrefix.replace(/_/g, " ");
+          // Influx encodes spaces as underscores — decode for display
+          const readableKey = withoutPrefix.replace(/_/g, " ");
 
-         entry.metrics[readableKey] = item[key];
-       });
+          entry.metrics[readableKey] = item[key];
+        });
 
         // Push to appropriate array
         item.LINE === "dismental"
@@ -965,42 +965,20 @@ from(bucket: "${bucket}")
       }
     });
 
-    // Helper function to convert time to minutes for comparison
-    const timeToMinutes = (timeStr) => {
-      const [time, period] = timeStr.split(" ");
-      let [hours, minutes] = time.split(":").map(Number);
+    // Get latest rejection/rework reason based on actual timestamp
+    const getLastValidEntry = (arr) => {
+      if (!arr || arr.length === 0) return null;
 
-      if (period === "PM" && hours !== 12) hours += 12;
-      if (period === "AM" && hours === 12) hours = 0;
-
-      return hours * 60 + minutes;
-    };
-
-    // Get shift-specific cutoff in minutes
-    const shiftCutoffs = {
-      SHIFT_B: timeToMinutes("02:35 PM"),
-      SHIFT_C: timeToMinutes("11:05 PM"),
-    };
-
-    // Modified function to get last valid entry after shift cutoff
-    const getLastValidEntry = (arr, bucket) => {
-      if (!arr.length) return null;
-
-      // Use shift cutoff if bucket is B or C
-      const cutoff = shiftCutoffs[bucket] ?? 0;
-
-      // Find the last item whose time is after cutoff
-      const lastEntry = [...arr].reverse().find((entry) => {
-        const entryMinutes = timeToMinutes(entry.time);
-        return entryMinutes >= cutoff;
-      });
-
-      return lastEntry || null;
+      return [...arr].sort(
+        (a, b) =>
+          new Date(b.OriginalTime).getTime() -
+          new Date(a.OriginalTime).getTime(),
+      )[0];
     };
 
     // Use the modified function with shift bucket
-    const lastDismental = getLastValidEntry(result.dismental, bucket);
-    const lastRework = getLastValidEntry(result.rework, bucket);
+    const lastDismental = getLastValidEntry(result.dismental);
+    const lastRework = getLastValidEntry(result.rework);
 
     const lastValues = {
       dismental: lastDismental ? lastDismental.metrics : null,
@@ -1013,7 +991,7 @@ from(bucket: "${bucket}")
       separatedData: result,
       lastValues,
     };
-  };
+  };;
 
   res.json({
     success: true,
@@ -1216,8 +1194,16 @@ const getPlantData = async (req, res) => {
     bucket = "TODAY";
   }
 
-  const filteredPlantFields = plantFields.filter((f) => f !== "OEE");
-  let fieldConditions = filteredPlantFields.map(f => `r._field == "${f}"`).join(" or ");
+  const filteredPlantFields = [
+    ...new Set([
+      ...plantFields.filter((f) => f !== "OEE" && f !== "set-jph"),
+      "set_jph",
+    ]),
+  ];
+
+  let fieldConditions = filteredPlantFields
+    .map((f) => `r._field == "${f}"`)
+    .join(" or ");
 
   console.time("queryTime1");
 
@@ -1266,7 +1252,7 @@ from(bucket: "${bucket}")
       QUALITY: {},
       targetProdLatestValues: {},
       todayProduced: {},
-      pphValues: {},
+      setJphValues: {},
     };
 
     const lastKnownValues = {};
@@ -1306,7 +1292,7 @@ from(bucket: "${bucket}")
           line: LINE,
         });
       } else if (_measurement === "Performance") {
-        if (_field === "Today_planned_Prod" || _field === "pph") {
+        if (_field === "Today_planned_Prod" || _field === "set_jph") {
           if (!groupData[_measurement][_field][LINE]) {
             groupData[_measurement][_field][LINE] = [];
           }
@@ -1383,16 +1369,19 @@ from(bucket: "${bucket}")
     });
 
     Object.keys(groupData.Performance || {}).forEach((field) => {
-      if (field === "pph") {
-        finalData.pphValues = {};
+      if (field === "set_jph") {
+        finalData.setJphValues = {};
+
         Object.keys(groupData.Performance[field]).forEach((key) => {
           if (!/^\d{2}:\d{2}$/.test(key)) {
             const lineData = groupData.Performance[field][key];
+
             if (Array.isArray(lineData) && lineData.length > 0) {
               const sorted = [...lineData].sort(
                 (a, b) => b.timestamp - a.timestamp,
               );
-              finalData.pphValues[key] = {
+
+              finalData.setJphValues[key] = {
                 lastEntry: {
                   time: sorted[0].time,
                   value: sorted[0].value,
@@ -1605,7 +1594,7 @@ finalData.oeeLatestValues.plant = {
 
     return res.json({
       success: true,
-      data: finalData.pphValues,
+      data: finalData.setJphValues,
       dataprod: finalData.todayProduced,
       data2: finalData.oeeLatestValues,
       data3: data3,
