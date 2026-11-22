@@ -1,11 +1,12 @@
 const express = require('express');
 const prismaClient  = require('../lib/prismaClient');
-const { addChecksheet, submitChecksheet, updateSubmission, getSubmission, getSubmissionByOrgId, setStatusSubmission, getSubmissionByUserId, getSubmissionById, getStatusCounts, getTables, getTableById, getTableByUserId, deleteTableById } = require('../Controllers/checkSheetController');
+const { addChecksheet, updateChecksheetByName, submitChecksheet, updateSubmission, getSubmission, getSubmissionByOrgId, setStatusSubmission, getSubmissionByUserId, getSubmissionById, getStatusCounts, getTables, getTableById, getTableByUserId, deleteTableById } = require('../Controllers/checkSheetController');
 
 const checkSheetRoute=express.Router();
 
 
 checkSheetRoute.post('/add/:organizationId', addChecksheet);
+checkSheetRoute.put('/updateByName/:organizationId', updateChecksheetByName);
 
 checkSheetRoute.post('/submission/add/:orgId', submitChecksheet);
 

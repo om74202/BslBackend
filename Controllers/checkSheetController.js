@@ -34,6 +34,39 @@ const addChecksheet=async (req, res) => {
 
 
 
+const updateChecksheetByName = async (req, res) => {
+  try {
+    const { organizationId } = req.params;
+    const { name, data } = req.body;
+    const { tableData, cellProperties, cellStyles } = data || {};
+
+    if (!name?.trim() || !Array.isArray(tableData) || !cellProperties || !cellStyles) {
+      return res.status(400).json({ success: false, error: "name and complete checksheet data are required" });
+    }
+
+    const matches = await prismaClient.checksheetTable.findMany({
+      where: { organizationId, name },
+      select: { id: true },
+      take: 2,
+    });
+    if (!matches.length) {
+      return res.status(404).json({ success: false, error: "Checksheet template not found" });
+    }
+    if (matches.length > 1) {
+      return res.status(409).json({ success: false, error: "Multiple templates have this name; update by id instead" });
+    }
+
+    const table = await prismaClient.checksheetTable.update({
+      where: { id: matches[0].id },
+      data: { tableData, cellProperties, cellStyles },
+    });
+    return res.status(200).json({ success: true, table });
+  } catch (err) {
+    console.error("Error updating checksheet template:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
+  }
+};
+
 const submitChecksheet=async (req, res) => {
   try {
     const {orgId}=req.params
@@ -450,4 +483,4 @@ const getTableById=async (req, res) => {
         return res.status(500).json({ error: "Internal Server Error" });
       }
     }
-module.exports={updateSubmission,addTemplate , getTemplate,addChecksheet,submitChecksheet,getSubmission,getSubmissionByOrgId,getTableById,getTableByUserId,deleteTableById,getTableById,setStatusSubmission,getStatusCounts,getSubmissionByUserId,getSubmissionById,getTables}
+module.exports={updateSubmission,addTemplate , getTemplate,addChecksheet,updateChecksheetByName,submitChecksheet,getSubmission,getSubmissionByOrgId,getTableById,getTableByUserId,deleteTableById,getTableById,setStatusSubmission,getStatusCounts,getSubmissionByUserId,getSubmissionById,getTables}
